@@ -1,0 +1,26 @@
+# Dependencias principales de la aplicación Real-ESRGAN Upscaling
+# Instalación: pip install -r requirements.txt
+
+# Framework web
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Real-ESRGAN y dependencias de procesamiento de imágenes
+realesrgan==0.3.0
+basicsr==1.4.2
+facexlib==0.3.0
+gfpgan==1.3.8
+
+# PyTorch (CPU version - para GPU, consultar documentación de PyTorch)
+torch==2.1.2
+torchvision==0.16.2
+
+# Procesamiento de imágenes
+opencv-python==4.9.0.80
+Pillow==10.2.0
+numpy==1.26.3
+
+# Utilidades
+aiofiles==23.2.1
+python-dotenv==1.0.0
