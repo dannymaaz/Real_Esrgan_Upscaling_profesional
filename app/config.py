@@ -50,7 +50,7 @@ MODEL_URLS = {
 }
 
 # Configuración de uploads
-MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB (reducido para evitar problemas de memoria)
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 
@@ -59,9 +59,9 @@ HOST = "127.0.0.1"
 PORT = 8000
 RELOAD = False  # Cambiar a True solo en desarrollo
 
-# Configuración de procesamiento
+# Configuración de procesamiento (OPTIMIZADO PARA EVITAR ERRORES DE MEMORIA)
 USE_GPU = True  # Se detectará automáticamente si hay GPU disponible
-TILE_SIZE = 0  # 0 = sin tiling, >0 para imágenes muy grandes (ej: 400)
+TILE_SIZE = 400  # Procesar por bloques de 400x400 para evitar consumo excesivo de RAM
 TILE_PAD = 10  # Padding para tiles
 PRE_PAD = 0  # Pre-padding
 HALF_PRECISION = False  # Usar FP16 para ahorrar memoria (requiere GPU)

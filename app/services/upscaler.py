@@ -173,6 +173,36 @@ class RealESRGANUpscaler:
         
         original_height, original_width = img.shape[:2]
         
+        # VALIDACIÓN DE DIMENSIONES PARA EVITAR ERRORES DE MEMORIA
+        max_dimension = 4000  # Límite máximo por dimensión
+        scale = MODELS[model_key]["scale"]
+        
+        # Verificar dimensiones originales
+        if original_width > max_dimension or original_height > max_dimension:
+            raise ValueError(
+                f"Imagen demasiado grande ({original_width}x{original_height}). "
+                f"Dimensión máxima permitida: {max_dimension}px. "
+                f"Por favor, reduce el tamaño de la imagen antes de procesarla."
+            )
+        
+        # Verificar dimensiones después del escalado
+        output_width = original_width * scale
+        output_height = original_height * scale
+        
+        if output_width > max_dimension * 2 or output_height > max_dimension * 2:
+            raise ValueError(
+                f"La imagen escalada sería demasiado grande ({output_width}x{output_height}). "
+                f"Considera usar una escala menor (2x en lugar de 4x)."
+            )
+        
+        # Estimar uso de memoria (aproximado)
+        estimated_memory_mb = (original_width * original_height * 3 * scale * scale) / (1024 * 1024)
+        if estimated_memory_mb > 2000:  # Más de 2GB
+            raise ValueError(
+                f"Esta imagen requiere aproximadamente {estimated_memory_mb:.0f}MB de RAM. "
+                f"Por favor, usa una imagen más pequeña o una escala menor."
+            )
+        
         # Procesar upscaling
         try:
             output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
