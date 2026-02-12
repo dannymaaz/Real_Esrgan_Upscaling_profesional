@@ -32,6 +32,7 @@ env/
 # Modelos (demasiado grandes para Git)
 models/*.pth
 models/*.onnx
+*.pth
 
 # Archivos temporales de la aplicación
 uploads/*

@@ -16,12 +16,20 @@ from realesrgan.archs.srvgg_arch import SRVGGNetCompact
 from app.config import (
     MODELS,
     MODELS_DIR,
+    GFPGAN_MODEL_PATH,
     USE_GPU,
     TILE_SIZE,
     TILE_PAD,
     PRE_PAD,
     HALF_PRECISION
 )
+
+try:
+    from gfpgan import GFPGANer
+    HAS_GFPGAN = True
+except ImportError:
+    HAS_GFPGAN = False
+    print("Advertencia: gfpgan no instalado, mejora de rostros desactivada")
 
 
 class RealESRGANUpscaler:
@@ -30,7 +38,42 @@ class RealESRGANUpscaler:
     def __init__(self):
         """Inicializa el servicio de upscaling"""
         self.models: Dict[str, RealESRGANer] = {}
+        self.face_enhancer = None
         self.device = self._detect_device()
+        
+    def _load_face_enhancer(self, scale: int, bg_upsampler=None):
+        """
+        Carga el modelo GFPGAN para mejora de rostros
+        
+        Args:
+            scale: Escala de upscaling
+            bg_upsampler: Upsampler de fondo (RealESRGAN)
+        """
+        if not HAS_GFPGAN:
+            return None
+            
+        if not GFPGAN_MODEL_PATH.exists():
+            return None
+            
+        # Si ya está cargado con la misma configuración, usarlo
+        # Nota: GFPGANer es ligero, podemos recargarlo si es necesario o mantener una instancia
+        # Por simplicidad y memoria, mantendremos una única instancia
+        
+        if self.face_enhancer is None:
+            self.face_enhancer = GFPGANer(
+                model_path=str(GFPGAN_MODEL_PATH),
+                upscale=scale,
+                arch='clean',
+                channel_multiplier=2,
+                bg_upsampler=bg_upsampler,
+                device=self.device
+            )
+        else:
+            # Actualizar upsampler de fondo si cambió
+            self.face_enhancer.bg_upsampler = bg_upsampler
+            self.face_enhancer.upscale = scale
+            
+        return self.face_enhancer
         
     def _detect_device(self) -> str:
         """
@@ -166,11 +209,29 @@ class RealESRGANUpscaler:
         # Cargar modelo
         upsampler = self.load_model(model_key)
         
-        # Leer imagen
-        img = cv2.imread(str(input_path), cv2.IMREAD_UNCHANGED)
+        # Leer archivo como bytes primero para decodificar
+        try:
+            with open(input_path, "rb") as f:
+                content = f.read()
+            nparr = np.frombuffer(content, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+        except Exception as e:
+            raise ValueError(f"No se pudo leer la imagen: {input_path}. Error: {str(e)}")
+            
         if img is None:
-            raise ValueError(f"No se pudo leer la imagen: {input_path}")
+            raise ValueError(f"No se pudo decodificar la imagen: {input_path}")
         
+        # === CORRECCIÓN DE CANALES PARA GFPGAN/REALESRGAN ===
+        # Asegurar formato BGR (3 canales)
+        if len(img.shape) == 2:  # Grayscale
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif len(img.shape) == 3 and img.shape[2] == 1:  # Grayscale (H, W, 1)
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif len(img.shape) == 3 and img.shape[2] == 4:  # RGBA
+            # Convertir a BGR, descartando alpha para evitar problemas
+            # (Si se requiere transparencia, se necesita manejo más complejo)
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+            
         original_height, original_width = img.shape[:2]
         
         # VALIDACIÓN DE DIMENSIONES PARA EVITAR ERRORES DE MEMORIA
@@ -205,7 +266,29 @@ class RealESRGANUpscaler:
         
         # Procesar upscaling
         try:
-            output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
+            if face_enhance and HAS_GFPGAN and GFPGAN_MODEL_PATH.exists():
+                # Cargar GFPGAN con el upsampler actual como background upsampler
+                face_enhancer = self._load_face_enhancer(
+                    scale=MODELS[model_key]["scale"],
+                    bg_upsampler=upsampler
+                )
+                
+                if face_enhancer is not None:
+                    # Procesar con mejora de rostros
+                    # enhance devuelve: cropped_faces, restored_faces, restored_img
+                    _, _, output = face_enhancer.enhance(
+                        img, 
+                        has_aligned=False, 
+                        only_center_face=False, 
+                        paste_back=True
+                    )
+                else:
+                    # Fallback si falla la carga de GFPGAN
+                    output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
+            else:
+                # Procesamiento estándar sin GFPGAN
+                output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
+                
         except Exception as e:
             raise Exception(f"Error al procesar la imagen: {str(e)}")
         
@@ -252,5 +335,6 @@ class RealESRGANUpscaler:
     def clear_cache(self):
         """Limpia la caché de modelos cargados para liberar memoria"""
         self.models.clear()
+        self.face_enhancer = None
         if self.device == 'cuda':
             torch.cuda.empty_cache()

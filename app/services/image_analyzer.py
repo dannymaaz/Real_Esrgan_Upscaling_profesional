@@ -63,7 +63,7 @@ class ImageAnalyzer:
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
             "analysis_notes": self._generate_notes(
-                width, height, image_type, sharpness, noise_level
+                width, height, image_type, sharpness, noise_level, has_faces
             )
         }
     
@@ -227,7 +227,7 @@ class ImageAnalyzer:
     
     def _generate_notes(
         self, width: int, height: int, image_type: str, 
-        sharpness: float, noise_level: str
+        sharpness: float, noise_level: str, has_faces: bool = False
     ) -> str:
         """
         Genera notas descriptivas sobre el análisis
@@ -238,6 +238,7 @@ class ImageAnalyzer:
             image_type: Tipo de imagen
             sharpness: Score de nitidez
             noise_level: Nivel de ruido
+            has_faces: Si se detectaron rostros
             
         Returns:
             Notas descriptivas
@@ -260,6 +261,10 @@ class ImageAnalyzer:
             "illustration": "ilustración"
         }
         notes.append(f"Detectada como {type_names.get(image_type, 'imagen')}")
+        
+        # Nota sobre rostros
+        if has_faces:
+            notes.append("Rostros detectados - se recomienda activar 'Mejorar Rostros'")
         
         # Nota sobre calidad
         if sharpness < 50:

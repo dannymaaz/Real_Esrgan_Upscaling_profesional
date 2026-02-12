@@ -6,6 +6,11 @@
 const API_BASE_URL = '';
 
 class APIClient {
+    // Getter para la URL base (útil para referencias externas)
+    static get BASE_URL() {
+        return API_BASE_URL;
+    }
+
     /**
      * Analiza una imagen y obtiene recomendaciones
      * @param {File} file - Archivo de imagen
@@ -33,14 +38,22 @@ class APIClient {
      * @param {File} file - Archivo de imagen
      * @param {string} scale - Escala ('2x' o '4x')
      * @param {string} model - Modelo específico (opcional)
+     * @param {boolean} faceEnhance - Activar mejora de rostros (opcional)
      * @returns {Promise<Object>} Resultado del procesamiento
      */
-    static async upscaleImage(file, scale, model = null) {
+    static async upscaleImage(file, scale, model = null, faceEnhance = false) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('scale', scale);
+        
+        // Solo enviar modelo si se especifica explícitamente y no es null/undefined
         if (model) {
             formData.append('model', model);
+        }
+
+        // Enviar flag de mejora de rostros
+        if (faceEnhance) {
+            formData.append('face_enhance', 'true');
         }
 
         const response = await fetch(`${API_BASE_URL}/api/upscale`, {
@@ -63,6 +76,13 @@ class APIClient {
      */
     static getDownloadUrl(filename) {
         return `${API_BASE_URL}/api/download/${filename}`;
+    }
+    
+    /**
+     * Helper para obtener URL de descarga (shim para compatibilidad con código nuevo)
+     */
+    static async deltDownloadUrl(filename) {
+        return this.getDownloadUrl(filename);
     }
 
     /**

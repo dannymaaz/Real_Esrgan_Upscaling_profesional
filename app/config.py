@@ -46,8 +46,12 @@ MODELS = {
 MODEL_URLS = {
     "RealESRGAN_x2plus": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
     "RealESRGAN_x4plus": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-    "RealESRGAN_x4plus_anime_6B": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth"
+    "RealESRGAN_x4plus_anime_6B": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
+    "GFPGANv1.3": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth"
 }
+
+# Configuración de GFPGAN
+GFPGAN_MODEL_PATH = MODELS_DIR / "GFPGANv1.3.pth"
 
 # Configuración de uploads
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB (reducido para evitar problemas de memoria)

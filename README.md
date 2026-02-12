@@ -1,4 +1,4 @@
-# 🚀 Real-ESRGAN Upscaling Profesional
+# 🚀# Real-ESRGAN Upscaling Profesional (Updated)
 
 <div align="center">
 

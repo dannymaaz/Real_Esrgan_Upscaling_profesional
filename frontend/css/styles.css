@@ -10,40 +10,40 @@
     --primary-blue: hsl(210, 100%, 56%);
     --primary-blue-dark: hsl(210, 100%, 45%);
     --primary-blue-light: hsl(210, 100%, 65%);
-    
+
     --secondary-blue: hsl(200, 95%, 50%);
     --accent-blue: hsl(190, 100%, 60%);
     --deep-blue: hsl(220, 40%, 15%);
     --dark-blue: hsl(220, 30%, 10%);
-    
+
     /* Colores de fondo */
     --bg-primary: hsl(220, 25%, 8%);
     --bg-secondary: hsl(220, 20%, 12%);
     --bg-card: hsla(220, 30%, 15%, 0.6);
-    
+
     /* Colores de texto */
     --text-primary: hsl(0, 0%, 95%);
     --text-secondary: hsl(0, 0%, 70%);
     --text-muted: hsl(0, 0%, 50%);
-    
+
     /* Efectos */
     --glow-blue: 0 0 20px hsla(210, 100%, 56%, 0.3);
     --glow-blue-strong: 0 0 30px hsla(210, 100%, 56%, 0.5);
     --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
-    
+
     /* Espaciado */
     --spacing-xs: 0.5rem;
     --spacing-sm: 1rem;
     --spacing-md: 1.5rem;
     --spacing-lg: 2rem;
     --spacing-xl: 3rem;
-    
+
     /* Bordes */
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
     --radius-xl: 24px;
-    
+
     /* Transiciones */
     --transition-fast: 0.2s ease;
     --transition-normal: 0.3s ease;
@@ -79,7 +79,7 @@ body {
     width: 100%;
     height: 100%;
     z-index: -1;
-    background: 
+    background:
         radial-gradient(circle at 20% 30%, hsla(210, 100%, 56%, 0.08) 0%, transparent 50%),
         radial-gradient(circle at 80% 70%, hsla(190, 100%, 60%, 0.06) 0%, transparent 50%),
         linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
@@ -92,7 +92,7 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background-image: 
+    background-image:
         repeating-linear-gradient(0deg, transparent, transparent 2px, hsla(210, 100%, 56%, 0.03) 2px, hsla(210, 100%, 56%, 0.03) 4px),
         repeating-linear-gradient(90deg, transparent, transparent 2px, hsla(210, 100%, 56%, 0.03) 2px, hsla(210, 100%, 56%, 0.03) 4px);
     opacity: 0.5;
@@ -131,8 +131,15 @@ body {
 }
 
 @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-10px); }
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
 }
 
 .logo-text {
@@ -186,6 +193,7 @@ body {
         opacity: 0;
         transform: translateY(20px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -229,15 +237,15 @@ body {
     .container {
         padding: var(--spacing-md);
     }
-    
+
     .logo-text {
         font-size: 1.5rem;
     }
-    
+
     .subtitle {
         font-size: 1rem;
     }
-    
+
     .header {
         margin-bottom: var(--spacing-lg);
     }
@@ -247,13 +255,221 @@ body {
     html {
         font-size: 14px;
     }
-    
+
     .logo-icon {
         width: 36px;
         height: 36px;
     }
-    
+
     .logo-text {
         font-size: 1.3rem;
     }
+}
+
+/* ========== Nuevas Funcionalidades Integradas (Estilo Adaptado) ========== */
+
+/* Checkbox Face Enhance */
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    margin: 1.5rem 0;
+    cursor: pointer;
+    user-select: none;
+    padding: 0.8rem;
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    border: 1px solid hsla(210, 100%, 56%, 0.2);
+    transition: all var(--transition-fast);
+}
+
+.checkbox-container:hover {
+    border-color: var(--primary-blue);
+    background: var(--bg-card);
+}
+
+.checkbox-container input {
+    display: none;
+}
+
+.checkmark {
+    width: 24px;
+    height: 24px;
+    background-color: transparent;
+    border-radius: 6px;
+    border: 2px solid var(--text-muted);
+    margin-right: 12px;
+    position: relative;
+    transition: all var(--transition-fast);
+}
+
+.checkbox-container input:checked~.checkmark {
+    background-color: var(--primary-blue);
+    border-color: var(--primary-blue);
+    box-shadow: var(--glow-blue);
+}
+
+.checkmark:after {
+    content: "";
+    position: absolute;
+    display: none;
+    left: 7px;
+    top: 3px;
+    width: 6px;
+    height: 12px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.checkbox-container input:checked~.checkmark:after {
+    display: block;
+}
+
+.label-text {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 1rem;
+}
+
+.option-description {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-left: 44px;
+    /* checkmark width + margin */
+    margin-top: -10px;
+    margin-bottom: 1rem;
+}
+
+/* Comparación de imágenes */
+.comparison-container {
+    position: relative;
+    width: 100%;
+    height: 400px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin: var(--spacing-md) 0;
+    cursor: col-resize;
+    box-shadow: var(--shadow-card);
+    border: 1px solid hsla(210, 100%, 56%, 0.2);
+}
+
+.image-comparison {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+.img-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.img-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    transform-origin: 0 0;
+    transition: transform 0.1s ease-out;
+}
+
+.img-wrapper.before {
+    z-index: 1;
+}
+
+.img-wrapper.after {
+    z-index: 2;
+    width: 50%;
+    border-right: 2px solid var(--primary-blue);
+    background-color: var(--bg-secondary);
+}
+
+.scroller {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 40px;
+    background: var(--primary-blue);
+    border-radius: 50%;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--glow-blue);
+    pointer-events: none;
+}
+
+.scroller-icon {
+    width: 20px;
+    height: 20px;
+    color: white;
+}
+
+.label-badge {
+    position: absolute;
+    top: 1rem;
+    padding: 0.4rem 0.8rem;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    border-radius: var(--radius-xl);
+    font-size: 0.8rem;
+    font-weight: 500;
+    pointer-events: none;
+    z-index: 5;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.before .label-badge {
+    left: 1rem;
+}
+
+.after .label-badge {
+    right: 1rem;
+}
+
+/* Controles de Zoom */
+.zoom-controls {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: var(--spacing-md);
+}
+
+.zoom-btn {
+    background: var(--bg-card);
+    border: 1px solid hsla(210, 100%, 56%, 0.3);
+    color: var(--text-primary);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.zoom-btn:hover {
+    background: var(--primary-blue);
+    color: white;
+    box-shadow: var(--glow-blue);
+    transform: scale(1.1);
+}
+
+#zoomLevel {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    color: var(--primary-blue);
+    min-width: 3rem;
+    justify-content: center;
 }

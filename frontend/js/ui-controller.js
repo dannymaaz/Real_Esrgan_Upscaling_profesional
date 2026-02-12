@@ -30,8 +30,13 @@ class UIController {
         const recommendation = document.getElementById('recommendation');
         const recommendationText = document.getElementById('recommendationText');
 
+        let extras = "";
+        if (analysis.has_faces) {
+            extras = " Se detectaron rostros, se recomienda activar 'Mejorar Rostros'.";
+        }
+
         recommendationText.textContent =
-            `Recomendamos usar escala ${analysis.recommended_scale}x para mejores resultados. ${analysis.analysis_notes}`;
+            `Recomendamos usar escala ${analysis.recommended_scale}x para mejores resultados. ${analysis.analysis_notes}${extras}`;
         recommendation.style.display = 'flex';
 
         // Seleccionar automáticamente la escala recomendada
@@ -78,47 +83,205 @@ class UIController {
     }
 
     /**
-     * Muestra el panel de resultados
-     * @param {Object} result - Resultado del procesamiento
+     * Muestra el panel de resultados (Alias para compatibilidad)
      */
     static showResultPanel(result) {
+        this.showResult(result);
+    }
+
+    /**
+     * Muestra el panel de resultados con comparación
+     * @param {Object} data - Resultado del procesamiento
+     */
+    static showResult(data) {
         document.getElementById('processingPanel').style.display = 'none';
-        document.getElementById('resultPanel').style.display = 'block';
+        const resultPanel = document.getElementById('resultPanel');
+        resultPanel.style.display = 'block';
+
+        // Configurar imágenes para comparación
+        const originalImg = document.getElementById('originalImage');
+        const processedImg = document.getElementById('processedImage');
+        const afterWrapper = document.getElementById('afterWrapper');
+
+        // Usar la imagen original desde la instancia global o currentFile si es posible
+        // Como currentFile está en app.js, necesitamos acceder a él o pasarlo.
+        // Pero window.currentFile no es estándar.
+        // Accedemos a la variable global si está disponible o usamos el src del preview si existiera.
+        // Mejor opción: app.js debería haber seteado esto, o lo pasamos.
+        // Asumiremos que app.js maneja la carga de src o lo hacemos aquí si tenemos acceso al file input.
+        const fileInput = document.getElementById('fileInput');
+        if (fileInput && fileInput.files && fileInput.files[0]) {
+            originalImg.src = URL.createObjectURL(fileInput.files[0]);
+        }
+
+        // La imagen procesada viene del servidor
+        // Añadir timestamp para evitar caché
+        processedImg.src = `${APIClient.BASE_URL}/outputs/${data.output_filename}?t=${new Date().getTime()}`;
+
+        // Configurar slider de comparación
+        this.setupComparisonSlider();
+        this.setupZoomControls();
 
         // Actualizar información del resultado
         const resultInfo = document.getElementById('resultInfo');
         resultInfo.innerHTML = `
             <div class="info-row">
                 <span class="info-label">Modelo usado:</span>
-                <span class="info-value">${result.model_used}</span>
+                <span class="info-value">${data.model_used}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Escala:</span>
-                <span class="info-value">${result.scale}x</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Resolución original:</span>
-                <span class="info-value">${result.original_size.width} × ${result.original_size.height}</span>
+                <span class="info-value">${data.scale}x</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Resolución final:</span>
-                <span class="info-value">${result.output_size.width} × ${result.output_size.height}</span>
+                <span class="info-value">${data.output_size.width} × ${data.output_size.height}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Tamaño del archivo:</span>
-                <span class="info-value">${result.output_size_mb} MB</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Dispositivo:</span>
-                <span class="info-value">${result.device_used === 'cuda' ? 'GPU' : 'CPU'}</span>
+                <span class="info-label">Mejora Facial:</span>
+                <span class="info-value">${data.face_enhance ? 'Sí' : 'No'}</span>
             </div>
         `;
 
         // Configurar botón de descarga
         const downloadBtn = document.getElementById('downloadBtn');
         downloadBtn.onclick = () => {
-            window.location.href = APIClient.getDownloadUrl(result.output_filename);
+            // Crear enlace temporal para descarga directa
+            const link = document.createElement('a');
+            link.href = APIClient.getDownloadUrl(data.output_filename);
+            link.download = data.output_filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         };
+
+        const newImageBtn = document.getElementById('newImageBtn');
+        newImageBtn.onclick = () => {
+            location.reload();
+        };
+    }
+
+    static setupComparisonSlider() {
+        const container = document.getElementById('comparisonContainer');
+        const scroller = document.getElementById('scroller');
+        const afterWrapper = document.getElementById('afterWrapper');
+
+        if (!container || !scroller || !afterWrapper) return;
+
+        let active = false;
+
+        // Reset state
+        afterWrapper.style.width = '50%';
+        scroller.style.left = '50%';
+
+        // Mouse events
+        container.addEventListener('mousedown', () => active = true);
+        document.addEventListener('mouseup', () => active = false);
+        document.addEventListener('mouseleave', () => active = false);
+
+        container.addEventListener('mousemove', (e) => {
+            if (!active) return;
+            this.updateSliderPosition(e, container, scroller, afterWrapper);
+        });
+
+        // Touch events
+        container.addEventListener('touchstart', () => active = true);
+        document.addEventListener('touchend', () => active = false);
+        document.addEventListener('touchcancel', () => active = false);
+
+        container.addEventListener('touchmove', (e) => {
+            if (!active) return;
+            this.updateSliderPosition(e.touches[0], container, scroller, afterWrapper);
+        });
+    }
+
+    static updateSliderPosition(e, container, scroller, afterWrapper) {
+        const rect = container.getBoundingClientRect();
+        let x = e.pageX - rect.left;
+
+        // Limitar movimiento dentro del contenedor
+        if (x < 0) x = 0;
+        if (x > rect.width) x = rect.width;
+
+        const percentage = (x / rect.width) * 100;
+
+        scroller.style.left = `${percentage}%`;
+        afterWrapper.style.width = `${percentage}%`;
+    }
+
+    static setupZoomControls() {
+        const zoomInBtn = document.getElementById('zoomInBtn');
+        const zoomOutBtn = document.getElementById('zoomOutBtn');
+        const resetZoomBtn = document.getElementById('resetZoomBtn');
+        const zoomLevelDisplay = document.getElementById('zoomLevel');
+
+        const originalImg = document.getElementById('originalImage');
+        const processedImg = document.getElementById('processedImage');
+        const container = document.getElementById('comparisonContainer');
+
+        if (!zoomInBtn || !originalImg || !processedImg || !container) return;
+
+        let scale = 1;
+
+        const updateZoom = () => {
+            // Limitar zoom
+            if (scale < 1) scale = 1;
+            if (scale > 5) scale = 5;
+
+            const transform = `scale(${scale})`;
+            originalImg.style.transform = transform;
+            processedImg.style.transform = transform;
+
+            zoomLevelDisplay.textContent = `${Math.round(scale * 100)}%`;
+
+            // Si hay zoom, cambiar cursor
+            if (scale > 1) {
+                container.style.cursor = 'grab';
+            } else {
+                container.style.cursor = 'col-resize';
+            }
+        };
+
+        zoomInBtn.onclick = () => {
+            scale += 0.5;
+            updateZoom();
+        };
+
+        zoomOutBtn.onclick = () => {
+            scale -= 0.5;
+            updateZoom();
+        };
+
+        resetZoomBtn.onclick = () => {
+            scale = 1;
+            originalImg.style.transformOrigin = '0 0';
+            processedImg.style.transformOrigin = '0 0';
+            updateZoom();
+        };
+
+        // Pan logic simple para imágenes con zoom
+        const setTransformOrigin = (e) => {
+            if (scale <= 1) return;
+            const rect = container.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / rect.width * 100;
+            const y = (e.clientY - rect.top) / rect.height * 100;
+
+            originalImg.style.transformOrigin = `${x}% ${y}%`;
+            processedImg.style.transformOrigin = `${x}% ${y}%`;
+        };
+
+        container.addEventListener('mousemove', setTransformOrigin);
+
+        // Scroll wheel zoom
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (e.deltaY < 0) {
+                scale += 0.1;
+            } else {
+                scale -= 0.1;
+            }
+            updateZoom();
+        });
     }
 
     /**
@@ -170,5 +333,16 @@ class UIController {
         const i = Math.floor(Math.log(bytes) / Math.log(k));
 
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Helper shortcuts
+    static hideElement(id) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    }
+
+    static showElement(id) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'block';
     }
 }

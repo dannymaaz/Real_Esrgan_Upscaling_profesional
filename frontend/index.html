@@ -1,32 +1,36 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Aplicación profesional para escalar imágenes usando Real-ESRGAN con IA">
     <meta name="author" content="Danny Maaz">
     <title>Real-ESRGAN Upscaling Profesional</title>
-    
+
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
+
     <!-- Estilos -->
     <link rel="stylesheet" href="/css/styles.css">
     <link rel="stylesheet" href="/css/components.css">
 </head>
+
 <body>
     <!-- Patrón de fondo -->
     <div class="background-pattern"></div>
-    
+
     <!-- Contenedor principal -->
     <div class="container">
         <!-- Header -->
         <header class="header">
             <div class="logo-container">
                 <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M4 16L8.586 11.414C9.367 10.633 10.633 10.633 11.414 11.414L16 16M14 14L15.586 12.414C16.367 11.633 17.633 11.633 18.414 12.414L20 14M14 8H14.01M6 20H18C19.105 20 20 19.105 20 18V6C20 4.895 19.105 4 18 4H6C4.895 4 4 4.895 4 6V18C4 19.105 4.895 20 6 20Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path
+                        d="M4 16L8.586 11.414C9.367 10.633 10.633 10.633 11.414 11.414L16 16M14 14L15.586 12.414C16.367 11.633 17.633 11.633 18.414 12.414L20 14M14 8H14.01M6 20H18C19.105 20 20 19.105 20 18V6C20 4.895 19.105 4 18 4H6C4.895 4 4 4.895 4 6V18C4 19.105 4.895 20 6 20Z"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 <h1 class="logo-text">Real-ESRGAN Upscaling</h1>
             </div>
@@ -40,7 +44,9 @@
                 <div class="upload-card glass-card">
                     <div id="dropzone" class="dropzone">
                         <svg class="upload-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M7 16C4.79086 16 3 14.2091 3 12C3 9.79086 4.79086 8 7 8C7.27143 5.70558 9.28024 4 11.7143 4C14.1483 4 16.1571 5.70558 16.4286 8C18.6377 8 20.4286 9.79086 20.4286 12C20.4286 14.2091 18.6377 16 16.4286 16M12 11V21M12 11L9 14M12 11L15 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path
+                                d="M7 16C4.79086 16 3 14.2091 3 12C3 9.79086 4.79086 8 7 8C7.27143 5.70558 9.28024 4 11.7143 4C14.1483 4 16.1571 5.70558 16.4286 8C18.6377 8 20.4286 9.79086 20.4286 12C20.4286 14.2091 18.6377 16 16.4286 16M12 11V21M12 11L9 14M12 11L15 14"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <h3 class="dropzone-title">Arrastra tu imagen aquí</h3>
                         <p class="dropzone-text">o haz clic para seleccionar</p>
@@ -54,7 +60,7 @@
             <section id="controlPanel" class="control-panel" style="display: none;">
                 <div class="control-card glass-card">
                     <h3 class="section-title">Configuración de Upscaling</h3>
-                    
+
                     <!-- Información de la imagen -->
                     <div id="imageInfo" class="image-info">
                         <div class="info-row">
@@ -86,10 +92,25 @@
                         </div>
                     </div>
 
+                    <!-- Face Enhance Option -->
+                    <div class="processing-options">
+                        <label class="checkbox-container" id="faceEnhanceContainer">
+                            <input type="checkbox" id="faceEnhanceBtn">
+                            <span class="checkmark"></span>
+                            <span class="label-text">Mejorar Rostros (GFPGAN)</span>
+                        </label>
+                        <p class="option-description">Actívalo para restaurar rostros distorsionados o borrosos.</p>
+                    </div>
+
+
+
                     <!-- Recomendación -->
                     <div id="recommendation" class="recommendation" style="display: none;">
-                        <svg class="recommendation-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M13 16H12V12H11M12 8H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <svg class="recommendation-icon" viewBox="0 0 24 24" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path
+                                d="M13 16H12V12H11M12 8H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         <div class="recommendation-content">
                             <p class="recommendation-title">Recomendación</p>
@@ -100,7 +121,8 @@
                     <!-- Botón de procesar -->
                     <button id="processBtn" class="btn-primary">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M13 10V3L4 14H11V21L20 10H13Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M13 10V3L4 14H11V21L20 10H13Z" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
                         Procesar Imagen
                     </button>
@@ -125,18 +147,44 @@
             <section id="resultPanel" class="result-panel" style="display: none;">
                 <div class="result-card glass-card">
                     <div class="result-header">
-                        <svg class="success-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        <h3 class="result-title">¡Imagen procesada exitosamente!</h3>
+                        <h3 class="result-title">¡Imagen Mejorada! ✨</h3>
+                        <div class="zoom-controls">
+                            <button class="zoom-btn" id="zoomOutBtn" title="Reducir">-</button>
+                            <span id="zoomLevel"
+                                style="font-size: 0.9rem; align-self: center; min-width: 3.5rem;">100%</span>
+                            <button class="zoom-btn" id="zoomInBtn" title="Aumentar">+</button>
+                            <button class="zoom-btn" id="resetZoomBtn" title="Restablecer">↺</button>
+                        </div>
                     </div>
-                    
+
+                    <div class="comparison-container" id="comparisonContainer">
+                        <div class="image-comparison">
+                            <div class="img-wrapper before">
+                                <img id="originalImage" src="" alt="Original">
+                                <span class="label-badge">Original</span>
+                            </div>
+                            <div class="img-wrapper after" id="afterWrapper">
+                                <img id="processedImage" src="" alt="Mejorada">
+                                <span class="label-badge">Mejorada</span>
+                            </div>
+                            <div class="scroller" id="scroller">
+                                <svg class="scroller-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 12H3M3 12L9 6M3 12L9 18M21 12L15 6M21 12L15 18" />
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="resultInfo" class="result-info"></div>
-                    
+
                     <div class="result-actions">
                         <button id="downloadBtn" class="btn-primary">
                             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15M7 10L12 15M12 15L17 10M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path
+                                    d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15M7 10L12 15M12 15L17 10M12 15V3"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" />
                             </svg>
                             Descargar Imagen
                         </button>
@@ -151,11 +199,12 @@
         <!-- Footer -->
         <footer class="footer">
             <p class="footer-text">
-                Creado por 
+                Creado por
                 <a href="https://github.com/dannymaaz" target="_blank" rel="noopener noreferrer" class="footer-link">
                     Danny Maaz
                     <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 0C5.37 0 0 5.37 0 12C0 17.31 3.435 21.795 8.205 23.385C8.805 23.49 9.03 23.13 9.03 22.815C9.03 22.53 9.015 21.585 9.015 20.58C6 21.135 5.22 19.845 4.98 19.17C4.845 18.825 4.26 17.76 3.75 17.475C3.33 17.25 2.73 16.695 3.735 16.68C4.68 16.665 5.355 17.55 5.58 17.91C6.66 19.725 8.385 19.215 9.075 18.9C9.18 18.12 9.495 17.595 9.84 17.295C7.17 16.995 4.38 15.96 4.38 11.37C4.38 10.065 4.845 8.985 5.61 8.145C5.49 7.845 5.07 6.615 5.73 4.965C5.73 4.965 6.735 4.65 9.03 6.195C9.99 5.925 11.01 5.79 12.03 5.79C13.05 5.79 14.07 5.925 15.03 6.195C17.325 4.635 18.33 4.965 18.33 4.965C18.99 6.615 18.57 7.845 18.45 8.145C19.215 8.985 19.68 10.05 19.68 11.37C19.68 15.975 16.875 16.995 14.205 17.295C14.64 17.67 15.015 18.39 15.015 19.515C15.015 21.12 15 22.41 15 22.815C15 23.13 15.225 23.505 15.825 23.385C18.2072 22.5807 20.2773 21.0497 21.7438 19.0074C23.2103 16.9651 23.9994 14.5143 24 12C24 5.37 18.63 0 12 0Z"/>
+                        <path
+                            d="M12 0C5.37 0 0 5.37 0 12C0 17.31 3.435 21.795 8.205 23.385C8.805 23.49 9.03 23.13 9.03 22.815C9.03 22.53 9.015 21.585 9.015 20.58C6 21.135 5.22 19.845 4.98 19.17C4.845 18.825 4.26 17.76 3.75 17.475C3.33 17.25 2.73 16.695 3.735 16.68C4.68 16.665 5.355 17.55 5.58 17.91C6.66 19.725 8.385 19.215 9.075 18.9C9.18 18.12 9.495 17.595 9.84 17.295C7.17 16.995 4.38 15.96 4.38 11.37C4.38 10.065 4.845 8.985 5.61 8.145C5.49 7.845 5.07 6.615 5.73 4.965C5.73 4.965 6.735 4.65 9.03 6.195C9.99 5.925 11.01 5.79 12.03 5.79C13.05 5.79 14.07 5.925 15.03 6.195C17.325 4.635 18.33 4.965 18.33 4.965C18.99 6.615 18.57 7.845 18.45 8.145C19.215 8.985 19.68 10.05 19.68 11.37C19.68 15.975 16.875 16.995 14.205 17.295C14.64 17.67 15.015 18.39 15.015 19.515C15.015 21.12 15 22.41 15 22.815C15 23.13 15.225 23.505 15.825 23.385C18.2072 22.5807 20.2773 21.0497 21.7438 19.0074C23.2103 16.9651 23.9994 14.5143 24 12C24 5.37 18.63 0 12 0Z" />
                     </svg>
                 </a>
             </p>
@@ -166,7 +215,9 @@
     <div id="errorModal" class="modal" style="display: none;">
         <div class="modal-content glass-card">
             <svg class="error-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path
+                    d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <h3 class="modal-title">Error</h3>
             <p id="errorMessage" class="modal-message"></p>
@@ -179,4 +230,5 @@
     <script src="/js/ui-controller.js"></script>
     <script src="/js/app.js"></script>
 </body>
+
 </html>

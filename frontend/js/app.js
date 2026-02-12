@@ -7,6 +7,7 @@
 let currentFile = null;
 let currentAnalysis = null;
 let selectedScale = null;
+let isProcessing = false;
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', () => {
@@ -65,12 +66,14 @@ function initializeEventListeners() {
     processBtn.addEventListener('click', handleProcess);
 
     // New image button
-    newImageBtn.addEventListener('click', () => {
-        UIController.reset();
-        currentFile = null;
-        currentAnalysis = null;
-        selectedScale = null;
-    });
+    if (newImageBtn) {
+        newImageBtn.addEventListener('click', () => {
+            UIController.reset();
+            currentFile = null;
+            currentAnalysis = null;
+            selectedScale = null;
+        });
+    }
 
     // Close error button
     closeErrorBtn.addEventListener('click', () => {
@@ -111,6 +114,18 @@ async function handleFileSelect(file) {
         // Seleccionar escala recomendada por defecto
         selectedScale = `${currentAnalysis.recommended_scale}x`;
 
+        // AUTO-DETECCIÓN DE ROSTROS
+        const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
+        if (faceEnhanceBtn) {
+            // Activar automáticamente si tiene caras
+            if (currentAnalysis.has_faces) {
+                faceEnhanceBtn.checked = true;
+                // Podríamos mostrar un mensaje también
+            } else {
+                faceEnhanceBtn.checked = false;
+            }
+        }
+
     } catch (error) {
         UIController.showError(error.message);
     }
@@ -130,15 +145,33 @@ async function handleProcess() {
         return;
     }
 
+    if (isProcessing) return;
+
     try {
         // Mostrar panel de procesamiento
         UIController.showProcessingPanel();
+        isProcessing = true;
+
+        // Obtener configuración de mejora de rostros
+        const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
+        const faceEnhance = faceEnhanceBtn ? faceEnhanceBtn.checked : false;
+
+        // Determinar modelo a usar
+        // Lógica: Si el usuario selecciona una escala, respetamos esa escala.
+        // Solo sobrescribimos el modelo si es un caso especial (anime en 4x).
+        // En 2x, dejamos que el backend use el default (que suele ser un modelo ligero o resize).
+
+        let modelToSend = null;
+        if (currentAnalysis?.image_type === 'anime' && selectedScale === '4x') {
+            modelToSend = 'RealESRGAN_x4plus_anime_6B';
+        }
 
         // Procesar imagen
         const result = await APIClient.upscaleImage(
             currentFile,
             selectedScale,
-            currentAnalysis?.recommended_model
+            modelToSend,
+            faceEnhance
         );
 
         // Completar barra de progreso
@@ -150,9 +183,12 @@ async function handleProcess() {
         }, 500);
 
     } catch (error) {
+        console.error("Processing error:", error);
         UIController.closeError();
-        UIController.showError(error.message);
+        UIController.showError(error.message || "Error desconocido al procesar imagen");
         UIController.reset();
+    } finally {
+        isProcessing = false;
     }
 }
 

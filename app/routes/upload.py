@@ -64,7 +64,8 @@ async def analyze_image(file: UploadFile = File(...)):
 async def upscale_image(
     file: UploadFile = File(...),
     scale: str = Form(...),
-    model: Optional[str] = Form(None)
+    model: Optional[str] = Form(None),
+    face_enhance: bool = Form(False)
 ):
     """
     Procesa upscaling de una imagen
@@ -72,7 +73,8 @@ async def upscale_image(
     Args:
         file: Archivo de imagen a procesar
         scale: Escala deseada ('2x' o '4x')
-        model: Modelo específico a usar (opcional, se auto-selecciona si no se proporciona)
+        model: Modelo específico a usar
+        face_enhance: Activar mejora de rostros (GFPGAN)
         
     Returns:
         Información del procesamiento y nombre del archivo de salida
@@ -86,6 +88,8 @@ async def upscale_image(
             model_key = model
         else:
             # Auto-seleccionar modelo basado en análisis
+            # Nota: Esto se ejecuta solo si el frontend no envió un modelo específico
+            # que coincida con la escala seleccionada
             analysis = analyzer.analyze_image(input_path)
             
             # Si se especificó escala, usarla; si no, usar recomendación
@@ -101,10 +105,12 @@ async def upscale_image(
                 )
         
         # Generar nombre de archivo de salida
+        # Incluir indicador de face_enhance en el nombre
+        suffix = "_face_enhanced" if face_enhance else ""
         output_filename = get_output_filename(
             input_filename,
             MODELS[model_key]["scale"],
-            MODELS[model_key]["name"]
+            MODELS[model_key]["name"] + suffix
         )
         output_path = OUTPUTS_DIR / output_filename
         
@@ -112,7 +118,8 @@ async def upscale_image(
         result = upscaler.upscale_image(
             input_path=input_path,
             output_path=output_path,
-            model_key=model_key
+            model_key=model_key,
+            face_enhance=face_enhance
         )
         
         # Agregar información adicional
