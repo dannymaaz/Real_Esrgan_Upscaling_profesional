@@ -9,6 +9,9 @@ let currentAnalysis = null;
 let selectedScale = null;
 let isProcessing = false;
 
+// Exponer globalmente para acceso en UIController
+window.currentFile = null;
+
 // Inicialización
 document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
@@ -103,6 +106,7 @@ async function handleFileSelect(file) {
     }
 
     currentFile = file;
+    window.currentFile = file;
 
     try {
         // Analizar imagen

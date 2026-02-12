@@ -103,15 +103,14 @@ class UIController {
         const processedImg = document.getElementById('processedImage');
         const afterWrapper = document.getElementById('afterWrapper');
 
-        // Usar la imagen original desde la instancia global o currentFile si es posible
-        // Como currentFile está en app.js, necesitamos acceder a él o pasarlo.
-        // Pero window.currentFile no es estándar.
-        // Accedemos a la variable global si está disponible o usamos el src del preview si existiera.
-        // Mejor opción: app.js debería haber seteado esto, o lo pasamos.
-        // Asumiremos que app.js maneja la carga de src o lo hacemos aquí si tenemos acceso al file input.
-        const fileInput = document.getElementById('fileInput');
-        if (fileInput && fileInput.files && fileInput.files[0]) {
-            originalImg.src = URL.createObjectURL(fileInput.files[0]);
+        // Usar la imagen original desde la variable global currentFile (definida en app.js)
+        if (window.currentFile) {
+            originalImg.src = URL.createObjectURL(window.currentFile);
+        } else {
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput && fileInput.files && fileInput.files[0]) {
+                originalImg.src = URL.createObjectURL(fileInput.files[0]);
+            }
         }
 
         // La imagen procesada viene del servidor
@@ -164,15 +163,32 @@ class UIController {
     static setupComparisonSlider() {
         const container = document.getElementById('comparisonContainer');
         const scroller = document.getElementById('scroller');
-        const afterWrapper = document.getElementById('afterWrapper');
 
-        if (!container || !scroller || !afterWrapper) return;
+        // Ahora controlamos el wrapper 'before' (Original) que está a la izquierda/arriba
+        const activeWrapper = document.querySelector('.img-wrapper.before');
+        const activeImg = activeWrapper ? activeWrapper.querySelector('img') : null;
+
+        if (!container || !scroller || !activeWrapper || !activeImg) return;
 
         let active = false;
 
         // Reset state
-        afterWrapper.style.width = '50%';
+        activeWrapper.style.width = '50%';
         scroller.style.left = '50%';
+
+        // Función para fijar el ancho de la imagen y evitar deformación (squishing)
+        const fixImageWidth = () => {
+            if (container && activeImg) {
+                // La imagen dentro del wrapper recortado debe tener el ancho TOTAL del contenedor
+                // para que al recortar el wrapper, se vea "recortada" y no "escalada"
+                activeImg.style.width = `${container.offsetWidth}px`;
+            }
+        };
+
+        // Inicializar y escuchar cambios de tamaño
+        // Usamos setTimeout para asegurar que el contenedor tenga dimensiones renderizadas
+        setTimeout(fixImageWidth, 100);
+        window.addEventListener('resize', fixImageWidth);
 
         // Mouse events
         container.addEventListener('mousedown', () => active = true);
@@ -181,7 +197,7 @@ class UIController {
 
         container.addEventListener('mousemove', (e) => {
             if (!active) return;
-            this.updateSliderPosition(e, container, scroller, afterWrapper);
+            this.updateSliderPosition(e, container, scroller, activeWrapper);
         });
 
         // Touch events
@@ -191,11 +207,11 @@ class UIController {
 
         container.addEventListener('touchmove', (e) => {
             if (!active) return;
-            this.updateSliderPosition(e.touches[0], container, scroller, afterWrapper);
+            this.updateSliderPosition(e.touches[0], container, scroller, activeWrapper);
         });
     }
 
-    static updateSliderPosition(e, container, scroller, afterWrapper) {
+    static updateSliderPosition(e, container, scroller, activeWrapper) {
         const rect = container.getBoundingClientRect();
         let x = e.pageX - rect.left;
 
@@ -206,9 +222,8 @@ class UIController {
         const percentage = (x / rect.width) * 100;
 
         scroller.style.left = `${percentage}%`;
-        afterWrapper.style.width = `${percentage}%`;
+        activeWrapper.style.width = `${percentage}%`;
     }
-
     static setupZoomControls() {
         const zoomInBtn = document.getElementById('zoomInBtn');
         const zoomOutBtn = document.getElementById('zoomOutBtn');
