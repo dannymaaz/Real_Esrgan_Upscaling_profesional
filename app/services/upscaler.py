@@ -278,11 +278,16 @@ class RealESRGANUpscaler:
                 if face_enhancer is not None:
                     # Procesar con mejora de rostros
                     # enhance devuelve: cropped_faces, restored_faces, restored_img
+                    # weight: controla el balance entre fidelidad (preservar original) y mejora
+                    #   - 0 = máxima fidelidad (preserva rasgos originales como ojos cerrados)
+                    #   - 1 = máxima mejora (puede alterar rasgos)
+                    #   - 0.5 = balance óptimo (recomendado)
                     _, _, output = face_enhancer.enhance(
                         img, 
                         has_aligned=False, 
                         only_center_face=False, 
-                        paste_back=True
+                        paste_back=True,
+                        weight=0.5  # Balance entre preservar rasgos originales y mejorar calidad
                     )
                 else:
                     # Fallback si falla la carga de GFPGAN
