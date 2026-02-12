@@ -370,12 +370,15 @@ body {
 }
 
 .img-wrapper img {
+    display: block;
     width: 100%;
     height: 100%;
     object-fit: contain;
+    object-position: center;
     pointer-events: none;
     transform-origin: 0 0;
     transition: transform 0.1s ease-out;
+    max-width: none;
 }
 
 .img-wrapper.before {
@@ -383,20 +386,11 @@ body {
     width: 50%;
     border-right: 2px solid var(--primary-blue);
     background-color: var(--bg-secondary);
-    overflow: hidden;
 }
 
 .img-wrapper.after {
     z-index: 1;
     width: 100%;
-}
-
-.img-wrapper img {
-    height: 100%;
-    object-fit: contain;
-    /* width se controlará por JS para evitar deformación, o usamos min-width */
-    width: 100%;
-    max-width: none;
 }
 
 .scroller {

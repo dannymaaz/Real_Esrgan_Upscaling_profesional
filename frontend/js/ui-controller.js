@@ -94,6 +94,8 @@ class UIController {
      * @param {Object} data - Resultado del procesamiento
      */
     static showResult(data) {
+        console.log('showResult called with data:', data);
+
         document.getElementById('processingPanel').style.display = 'none';
         const resultPanel = document.getElementById('resultPanel');
         resultPanel.style.display = 'block';
@@ -101,25 +103,57 @@ class UIController {
         // Configurar imágenes para comparación
         const originalImg = document.getElementById('originalImage');
         const processedImg = document.getElementById('processedImage');
-        const afterWrapper = document.getElementById('afterWrapper');
 
-        // Usar la imagen original desde la variable global currentFile (definida en app.js)
+        console.log('Image elements:', { originalImg, processedImg });
+
+        // Función para cargar imagen con Promise
+        const loadImage = (imgElement, src, label) => {
+            return new Promise((resolve, reject) => {
+                imgElement.onload = () => {
+                    console.log(`${label} loaded successfully:`, src);
+                    resolve();
+                };
+                imgElement.onerror = (e) => {
+                    console.error(`${label} failed to load:`, src, e);
+                    reject(new Error(`Failed to load ${label}`));
+                };
+                imgElement.src = src;
+                console.log(`${label} src set to:`, src);
+            });
+        };
+
+        // Cargar imagen original
+        let originalSrc = null;
         if (window.currentFile) {
-            originalImg.src = URL.createObjectURL(window.currentFile);
+            originalSrc = URL.createObjectURL(window.currentFile);
+            console.log('Using window.currentFile for original image');
         } else {
             const fileInput = document.getElementById('fileInput');
             if (fileInput && fileInput.files && fileInput.files[0]) {
-                originalImg.src = URL.createObjectURL(fileInput.files[0]);
+                originalSrc = URL.createObjectURL(fileInput.files[0]);
+                console.log('Using fileInput for original image');
+            } else {
+                console.error('No source found for original image!');
             }
         }
 
-        // La imagen procesada viene del servidor
-        // Añadir timestamp para evitar caché
-        processedImg.src = `${APIClient.BASE_URL}/api/download/${data.output_filename}?t=${new Date().getTime()}`;
+        // Cargar imagen procesada
+        const processedSrc = `${APIClient.BASE_URL}/api/download/${data.output_filename}?t=${new Date().getTime()}`;
+        console.log('Processed image URL:', processedSrc);
 
-        // Configurar slider de comparación
-        this.setupComparisonSlider();
-        this.setupZoomControls();
+        // Cargar ambas imágenes en paralelo
+        Promise.all([
+            originalSrc ? loadImage(originalImg, originalSrc, 'Original') : Promise.reject('No original source'),
+            loadImage(processedImg, processedSrc, 'Processed')
+        ]).then(() => {
+            console.log('Both images loaded successfully');
+            // Configurar slider de comparación después de que las imágenes se carguen
+            this.setupComparisonSlider();
+            this.setupZoomControls();
+        }).catch((error) => {
+            console.error('Error loading images:', error);
+            UIController.showError('Error al cargar las imágenes: ' + error.message);
+        });
 
         // Actualizar información del resultado
         const resultInfo = document.getElementById('resultInfo');
@@ -163,32 +197,20 @@ class UIController {
     static setupComparisonSlider() {
         const container = document.getElementById('comparisonContainer');
         const scroller = document.getElementById('scroller');
+        const beforeWrapper = document.querySelector('.img-wrapper.before');
 
-        // Ahora controlamos el wrapper 'before' (Original) que está a la izquierda/arriba
-        const activeWrapper = document.querySelector('.img-wrapper.before');
-        const activeImg = activeWrapper ? activeWrapper.querySelector('img') : null;
+        if (!container || !scroller || !beforeWrapper) {
+            console.error('Comparison slider elements not found:', { container, scroller, beforeWrapper });
+            return;
+        }
 
-        if (!container || !scroller || !activeWrapper || !activeImg) return;
+        console.log('Setting up comparison slider');
 
         let active = false;
 
         // Reset state
-        activeWrapper.style.width = '50%';
+        beforeWrapper.style.width = '50%';
         scroller.style.left = '50%';
-
-        // Función para fijar el ancho de la imagen y evitar deformación (squishing)
-        const fixImageWidth = () => {
-            if (container && activeImg) {
-                // La imagen dentro del wrapper recortado debe tener el ancho TOTAL del contenedor
-                // para que al recortar el wrapper, se vea "recortada" y no "escalada"
-                activeImg.style.width = `${container.offsetWidth}px`;
-            }
-        };
-
-        // Inicializar y escuchar cambios de tamaño
-        // Usamos setTimeout para asegurar que el contenedor tenga dimensiones renderizadas
-        setTimeout(fixImageWidth, 100);
-        window.addEventListener('resize', fixImageWidth);
 
         // Mouse events
         container.addEventListener('mousedown', () => active = true);
@@ -197,7 +219,7 @@ class UIController {
 
         container.addEventListener('mousemove', (e) => {
             if (!active) return;
-            this.updateSliderPosition(e, container, scroller, activeWrapper);
+            this.updateSliderPosition(e, container, scroller, beforeWrapper);
         });
 
         // Touch events
@@ -207,11 +229,11 @@ class UIController {
 
         container.addEventListener('touchmove', (e) => {
             if (!active) return;
-            this.updateSliderPosition(e.touches[0], container, scroller, activeWrapper);
+            this.updateSliderPosition(e.touches[0], container, scroller, beforeWrapper);
         });
     }
 
-    static updateSliderPosition(e, container, scroller, activeWrapper) {
+    static updateSliderPosition(e, container, scroller, beforeWrapper) {
         const rect = container.getBoundingClientRect();
         let x = e.pageX - rect.left;
 
@@ -222,7 +244,7 @@ class UIController {
         const percentage = (x / rect.width) * 100;
 
         scroller.style.left = `${percentage}%`;
-        activeWrapper.style.width = `${percentage}%`;
+        beforeWrapper.style.width = `${percentage}%`;
     }
     static setupZoomControls() {
         const zoomInBtn = document.getElementById('zoomInBtn');
