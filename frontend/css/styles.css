@@ -379,14 +379,24 @@ body {
 }
 
 .img-wrapper.before {
-    z-index: 1;
-}
-
-.img-wrapper.after {
     z-index: 2;
     width: 50%;
     border-right: 2px solid var(--primary-blue);
     background-color: var(--bg-secondary);
+    overflow: hidden;
+}
+
+.img-wrapper.after {
+    z-index: 1;
+    width: 100%;
+}
+
+.img-wrapper img {
+    height: 100%;
+    object-fit: contain;
+    /* width se controlará por JS para evitar deformación, o usamos min-width */
+    width: 100%;
+    max-width: none;
 }
 
 .scroller {
