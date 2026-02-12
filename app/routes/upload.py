@@ -83,21 +83,40 @@ async def upscale_image(
         # Guardar archivo de entrada
         input_filename, input_path = await save_upload_file(file)
         
+        # Analizar imagen para obtener dimensiones y tipo
+        analysis = analyzer.analyze_image(input_path)
+        original_width = analysis.get("width", 0)
+        original_height = analysis.get("height", 0)
+        formatted_size = analysis.get("file_size_mb", 0)
+        
         # Determinar modelo a usar
-        # Para MEJORAR CALIDAD: Usar siempre el modelo x4 (RealESRGAN_x4plus) incluso para 2x
-        # y luego redimensionar el resultado. El modelo x2plus suele ser muy "suave/encerado".
+        # Para MEJORAR CALIDAD: Por defecto usamos el modelo x4 (RealESRGAN_x4plus) incluso para 2x
+        # y luego redimensionamos. PERO si la imagen es muy grande, esto podría exceder el límite de memoria/dimensión.
+        # Límite seguro aprox: 8000px de altura final intermedia.
+        
+        LIMIT_DIMENSION = 8000
+        use_4x_fallback = False # Si debemos usar 4x
+        
+        # Verificar si 4x excedería los límites
+        if (original_width * 4 > LIMIT_DIMENSION or original_height * 4 > LIMIT_DIMENSION) and scale == "2x":
+            use_2x_native = True # Forzar uso nativo de 2x para evitar error de "too large"
+        else:
+            use_2x_native = False
+
         resize_factor = 1.0
         
-        if model and model in MODELS:
+        if model and model in MODELS and not use_2x_native:
             model_key = model
             # Si el usuario eligió un modelo específico, respetamos su elección de escala
             # Pero si eligió escala 2x con modelo 4x, debemos redimensionar
             if scale == "2x" and MODELS[model_key]["scale"] == 4:
                 resize_factor = 0.5
+        elif use_2x_native:
+            # Forzar modelo 2x porque la imagen es muy grande para 4x
+            model_key = "2x" # RealESRGAN_x2plus
+            resize_factor = 1.0
         else:
-            # Auto-selección: Priorizar calidad
-            # Usar modelo 4x por defecto
-            analysis = analyzer.analyze_image(input_path)
+            # Auto-selección: Priorizar calidad (usar 4x) salvo que sea muy grande
             
             # Si es anime, usar modelo anime
             if analysis.get("image_type") == "anime":
