@@ -184,7 +184,8 @@ class RealESRGANUpscaler:
         input_path: Path, 
         output_path: Path, 
         model_key: str = "4x",
-        face_enhance: bool = False
+        face_enhance: bool = False,
+        resize_factor: float = 1.0
     ) -> Dict:
         """
         Escala una imagen usando Real-ESRGAN
@@ -194,6 +195,7 @@ class RealESRGANUpscaler:
             output_path: Ruta donde guardar la imagen escalada
             model_key: Modelo a usar ('2x', '4x', '4x_anime')
             face_enhance: Si se debe mejorar rostros (requiere GFPGAN)
+            resize_factor: Factor para redimensionar la salida (ej: 0.5 para reducir a la mitad)
             
         Returns:
             Diccionario con información del procesamiento
@@ -292,6 +294,12 @@ class RealESRGANUpscaler:
         except Exception as e:
             raise Exception(f"Error al procesar la imagen: {str(e)}")
         
+        # Redimensionar si es necesario (para mejorar calidad usando modelo x4 pero output x2)
+        if resize_factor != 1.0:
+            new_width = int(output.shape[1] * resize_factor)
+            new_height = int(output.shape[0] * resize_factor)
+            output = cv2.resize(output, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+
         # Guardar resultado
         cv2.imwrite(str(output_path), output)
         
@@ -301,7 +309,7 @@ class RealESRGANUpscaler:
         return {
             "success": True,
             "model_used": MODELS[model_key]["name"],
-            "scale": MODELS[model_key]["scale"],
+            "scale": MODELS[model_key]["scale"] * resize_factor,
             "original_size": {
                 "width": original_width,
                 "height": original_height

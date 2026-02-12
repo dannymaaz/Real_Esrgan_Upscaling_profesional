@@ -84,20 +84,32 @@ async def upscale_image(
         input_filename, input_path = await save_upload_file(file)
         
         # Determinar modelo a usar
+        # Para MEJORAR CALIDAD: Usar siempre el modelo x4 (RealESRGAN_x4plus) incluso para 2x
+        # y luego redimensionar el resultado. El modelo x2plus suele ser muy "suave/encerado".
+        resize_factor = 1.0
+        
         if model and model in MODELS:
             model_key = model
+            # Si el usuario eligió un modelo específico, respetamos su elección de escala
+            # Pero si eligió escala 2x con modelo 4x, debemos redimensionar
+            if scale == "2x" and MODELS[model_key]["scale"] == 4:
+                resize_factor = 0.5
         else:
-            # Auto-seleccionar modelo basado en análisis
-            # Nota: Esto se ejecuta solo si el frontend no envió un modelo específico
-            # que coincida con la escala seleccionada
+            # Auto-selección: Priorizar calidad
+            # Usar modelo 4x por defecto
             analysis = analyzer.analyze_image(input_path)
             
-            # Si se especificó escala, usarla; si no, usar recomendación
+            # Si es anime, usar modelo anime
+            if analysis.get("image_type") == "anime":
+                model_key = "4x_anime"
+            else:
+                model_key = "4x" # RealESRGAN_x4plus (mejor calidad general)
+            
+            # Ajustar factor de redimensionamiento según escala solicitada
             if scale == "2x":
-                model_key = "2x"
+                resize_factor = 0.5
             elif scale == "4x":
-                # Usar modelo recomendado del análisis
-                model_key = analysis.get("recommended_model", "4x")
+                resize_factor = 1.0
             else:
                 raise HTTPException(
                     status_code=400,
@@ -107,9 +119,13 @@ async def upscale_image(
         # Generar nombre de archivo de salida
         # Incluir indicador de face_enhance en el nombre
         suffix = "_face_enhanced" if face_enhance else ""
+        # Indicar si hubo redimensionamiento
+        if resize_factor != 1.0:
+            suffix += f"_resized_{scale}"
+            
         output_filename = get_output_filename(
             input_filename,
-            MODELS[model_key]["scale"],
+            MODELS[model_key]["scale"] if resize_factor == 1.0 else int(MODELS[model_key]["scale"] * resize_factor),
             MODELS[model_key]["name"] + suffix
         )
         output_path = OUTPUTS_DIR / output_filename
@@ -119,7 +135,8 @@ async def upscale_image(
             input_path=input_path,
             output_path=output_path,
             model_key=model_key,
-            face_enhance=face_enhance
+            face_enhance=face_enhance,
+            resize_factor=resize_factor
         )
         
         # Agregar información adicional

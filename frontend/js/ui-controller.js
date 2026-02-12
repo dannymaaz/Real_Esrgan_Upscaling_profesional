@@ -116,7 +116,7 @@ class UIController {
 
         // La imagen procesada viene del servidor
         // Añadir timestamp para evitar caché
-        processedImg.src = `${APIClient.BASE_URL}/outputs/${data.output_filename}?t=${new Date().getTime()}`;
+        processedImg.src = `${APIClient.BASE_URL}/api/download/${data.output_filename}?t=${new Date().getTime()}`;
 
         // Configurar slider de comparación
         this.setupComparisonSlider();
