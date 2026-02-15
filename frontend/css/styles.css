@@ -407,7 +407,9 @@ body {
     align-items: center;
     justify-content: center;
     box-shadow: var(--glow-blue);
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: col-resize;
+    touch-action: none;
 }
 
 .scroller-icon {

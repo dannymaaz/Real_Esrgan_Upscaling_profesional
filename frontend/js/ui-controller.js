@@ -258,38 +258,44 @@ class UIController {
             return;
         }
 
-        console.log('Setting up comparison slider');
-
-        let active = false;
-
         // Reset state
         beforeWrapper.style.width = '50%';
         scroller.style.left = '50%';
 
-        // Mouse events
-        container.addEventListener('mousedown', () => active = true);
-        document.addEventListener('mouseup', () => active = false);
-        document.addEventListener('mouseleave', () => active = false);
+        if (container.dataset.sliderBound === '1') {
+            return;
+        }
+        container.dataset.sliderBound = '1';
 
-        container.addEventListener('mousemove', (e) => {
+        let active = false;
+        let pointerId = null;
+
+        // Solo arrastrar desde el handle para evitar movimiento accidental.
+        scroller.addEventListener('pointerdown', (e) => {
+            active = true;
+            pointerId = e.pointerId;
+            scroller.setPointerCapture(pointerId);
+            e.preventDefault();
+        });
+
+        scroller.addEventListener('pointermove', (e) => {
             if (!active) return;
             this.updateSliderPosition(e, container, scroller, beforeWrapper);
         });
 
-        // Touch events
-        container.addEventListener('touchstart', () => active = true);
-        document.addEventListener('touchend', () => active = false);
-        document.addEventListener('touchcancel', () => active = false);
+        const stopDrag = () => {
+            active = false;
+            pointerId = null;
+        };
 
-        container.addEventListener('touchmove', (e) => {
-            if (!active) return;
-            this.updateSliderPosition(e.touches[0], container, scroller, beforeWrapper);
-        });
+        scroller.addEventListener('pointerup', stopDrag);
+        scroller.addEventListener('pointercancel', stopDrag);
+        scroller.addEventListener('lostpointercapture', stopDrag);
     }
 
     static updateSliderPosition(e, container, scroller, beforeWrapper) {
         const rect = container.getBoundingClientRect();
-        let x = e.pageX - rect.left;
+        let x = e.clientX - rect.left;
 
         // Limitar movimiento dentro del contenedor
         if (x < 0) x = 0;
@@ -310,69 +316,114 @@ class UIController {
         const processedImg = document.getElementById('processedImage');
         const container = document.getElementById('comparisonContainer');
 
-        if (!zoomInBtn || !originalImg || !processedImg || !container) return;
+        if (!zoomInBtn || !originalImg || !processedImg || !container || !zoomLevelDisplay) return;
 
-        let scale = 1;
+        if (!this._zoomState) {
+            this._zoomState = { scale: 1, panX: 0, panY: 0 };
+        } else {
+            this._zoomState.scale = 1;
+            this._zoomState.panX = 0;
+            this._zoomState.panY = 0;
+        }
+        const state = this._zoomState;
 
-        const updateZoom = () => {
-            // Limitar zoom
-            if (scale < 1) scale = 1;
-            if (scale > 5) scale = 5;
+        const getDisplaySize = (imgEl) => {
+            const cw = container.clientWidth || 1;
+            const ch = container.clientHeight || 1;
+            const nw = imgEl.naturalWidth || cw;
+            const nh = imgEl.naturalHeight || ch;
+            const fit = Math.min(cw / nw, ch / nh);
+            return {
+                width: Math.max(1, nw * fit),
+                height: Math.max(1, nh * fit)
+            };
+        };
 
-            const transform = `scale(${scale})`;
+        const clampPan = () => {
+            const base = getDisplaySize(originalImg);
+            const maxX = Math.max(0, ((base.width * state.scale) - base.width) * 0.5);
+            const maxY = Math.max(0, ((base.height * state.scale) - base.height) * 0.5);
+            state.panX = Math.max(-maxX, Math.min(maxX, state.panX));
+            state.panY = Math.max(-maxY, Math.min(maxY, state.panY));
+        };
+
+        const applyTransform = () => {
+            state.scale = Math.max(1, Math.min(5, state.scale));
+            clampPan();
+
+            const transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
+            originalImg.style.transformOrigin = '50% 50%';
+            processedImg.style.transformOrigin = '50% 50%';
             originalImg.style.transform = transform;
             processedImg.style.transform = transform;
 
-            zoomLevelDisplay.textContent = `${Math.round(scale * 100)}%`;
+            zoomLevelDisplay.textContent = `${Math.round(state.scale * 100)}%`;
+            container.style.cursor = state.scale > 1 ? 'grab' : 'col-resize';
+        };
 
-            // Si hay zoom, cambiar cursor
-            if (scale > 1) {
-                container.style.cursor = 'grab';
-            } else {
-                container.style.cursor = 'col-resize';
-            }
+        const followPointer = (e) => {
+            if (state.scale <= 1) return;
+
+            const rect = container.getBoundingClientRect();
+            const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+            const yRatio = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)));
+
+            const base = getDisplaySize(originalImg);
+            const maxX = Math.max(0, ((base.width * state.scale) - base.width) * 0.5);
+            const maxY = Math.max(0, ((base.height * state.scale) - base.height) * 0.5);
+
+            state.panX = (0.5 - xRatio) * (maxX * 2);
+            state.panY = (0.5 - yRatio) * (maxY * 2);
+            clampPan();
+            applyTransform();
         };
 
         zoomInBtn.onclick = () => {
-            scale += 0.5;
-            updateZoom();
+            state.scale += 0.5;
+            applyTransform();
         };
 
         zoomOutBtn.onclick = () => {
-            scale -= 0.5;
-            updateZoom();
+            state.scale -= 0.5;
+            if (state.scale <= 1) {
+                state.scale = 1;
+                state.panX = 0;
+                state.panY = 0;
+            }
+            applyTransform();
         };
 
         resetZoomBtn.onclick = () => {
-            scale = 1;
-            originalImg.style.transformOrigin = '0 0';
-            processedImg.style.transformOrigin = '0 0';
-            updateZoom();
+            state.scale = 1;
+            state.panX = 0;
+            state.panY = 0;
+            applyTransform();
         };
 
-        // Pan logic simple para imágenes con zoom
-        const setTransformOrigin = (e) => {
-            if (scale <= 1) return;
-            const rect = container.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width * 100;
-            const y = (e.clientY - rect.top) / rect.height * 100;
+        if (container.dataset.zoomBound !== '1') {
+            container.dataset.zoomBound = '1';
 
-            originalImg.style.transformOrigin = `${x}% ${y}%`;
-            processedImg.style.transformOrigin = `${x}% ${y}%`;
-        };
+            container.addEventListener('mousemove', (e) => {
+                followPointer(e);
+            });
 
-        container.addEventListener('mousemove', setTransformOrigin);
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                    state.scale += 0.1;
+                } else {
+                    state.scale -= 0.1;
+                }
+                if (state.scale <= 1) {
+                    state.scale = 1;
+                    state.panX = 0;
+                    state.panY = 0;
+                }
+                applyTransform();
+            }, { passive: false });
+        }
 
-        // Scroll wheel zoom
-        container.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            if (e.deltaY < 0) {
-                scale += 0.1;
-            } else {
-                scale -= 0.1;
-            }
-            updateZoom();
-        });
+        applyTransform();
     }
 
     /**
