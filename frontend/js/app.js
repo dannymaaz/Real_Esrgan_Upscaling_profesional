@@ -131,7 +131,11 @@ async function handleFileSelect(file) {
         }
 
     } catch (error) {
-        UIController.showError(error.message);
+        const message = (error && error.message) ? String(error.message) : '';
+        const normalizedMessage = message.includes('Failed to fetch')
+            ? 'No se pudo conectar con el servidor al analizar la imagen. Inicia el backend en http://127.0.0.1:8000'
+            : (message || 'Error al analizar la imagen');
+        UIController.showError(normalizedMessage);
     }
 }
 
