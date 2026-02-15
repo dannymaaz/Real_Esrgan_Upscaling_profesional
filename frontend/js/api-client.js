@@ -3,12 +3,39 @@
  * Autor: Danny Maaz (github.com/dannymaaz)
  */
 
-const API_BASE_URL = '';
+const API_BASE_URL = window.location.protocol === 'file:'
+    ? 'http://127.0.0.1:8000'
+    : '';
 
 class APIClient {
     // Getter para la URL base (útil para referencias externas)
     static get BASE_URL() {
         return API_BASE_URL;
+    }
+
+    static async requestJson(path, options = {}) {
+        let response;
+        try {
+            response = await fetch(`${API_BASE_URL}${path}`, options);
+        } catch (error) {
+            throw new Error(
+                'No se pudo conectar con el servidor. Verifica que la app backend este activa en http://127.0.0.1:8000'
+            );
+        }
+
+        if (!response.ok) {
+            let detail = null;
+            try {
+                const errorData = await response.json();
+                detail = errorData?.detail;
+            } catch (_) {
+                detail = null;
+            }
+
+            throw new Error(detail || `Error HTTP ${response.status} al procesar la solicitud`);
+        }
+
+        return await response.json();
     }
 
     /**
@@ -20,17 +47,10 @@ class APIClient {
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${API_BASE_URL}/api/analyze`, {
+        return await this.requestJson('/api/analyze', {
             method: 'POST',
             body: formData
         });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Error al analizar la imagen');
-        }
-
-        return await response.json();
     }
 
     /**
@@ -56,17 +76,10 @@ class APIClient {
             formData.append('face_enhance', 'true');
         }
 
-        const response = await fetch(`${API_BASE_URL}/api/upscale`, {
+        return await this.requestJson('/api/upscale', {
             method: 'POST',
             body: formData
         });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Error al procesar la imagen');
-        }
-
-        return await response.json();
     }
 
     /**
@@ -90,12 +103,6 @@ class APIClient {
      * @returns {Promise<Object>} Información de modelos
      */
     static async getModels() {
-        const response = await fetch(`${API_BASE_URL}/api/models`);
-
-        if (!response.ok) {
-            throw new Error('Error al obtener modelos');
-        }
-
-        return await response.json();
+        return await this.requestJson('/api/models');
     }
 }

@@ -303,7 +303,7 @@ class RealESRGANUpscaler:
                 # Procesamiento estándar sin GFPGAN
                 output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
                 
-        except (MemoryError, np.core._exceptions.MemoryError) as e:
+        except MemoryError:
             raise Exception("Error de Memoria: La imagen es demasiado grande para procesarla. Intenta cerrando otros programas o usando una imagen más pequeña.")
         except Exception as e:
             raise Exception(f"Error al procesar la imagen: {str(e)}")
