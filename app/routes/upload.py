@@ -42,6 +42,17 @@ def _normalize_model_key(model: Optional[str]) -> Optional[str]:
     return None
 
 
+def _normalize_image_type_override(image_type: Optional[str]) -> Optional[str]:
+    """Normaliza override manual de tipo de imagen enviado por UI."""
+    if not image_type:
+        return None
+
+    normalized = image_type.strip().lower()
+    if normalized in {"photo", "anime", "illustration", "filtered_photo"}:
+        return normalized
+    return None
+
+
 @router.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
     """
@@ -80,7 +91,8 @@ async def upscale_image(
     file: UploadFile = File(...),
     scale: str = Form(...),
     model: Optional[str] = Form(None),
-    face_enhance: bool = Form(False)
+    face_enhance: bool = Form(False),
+    forced_image_type: Optional[str] = Form(None)
 ):
     """
     Procesa upscaling de una imagen
@@ -102,6 +114,16 @@ async def upscale_image(
         analysis = analyzer.analyze_image(input_path)
         original_width = analysis.get("width", 0)
         original_height = analysis.get("height", 0)
+        analyzed_image_type = analysis.get("image_type", "photo")
+        normalized_forced_type = _normalize_image_type_override(forced_image_type)
+
+        if forced_image_type and normalized_forced_type is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo de imagen no válido para override: {forced_image_type}"
+            )
+
+        effective_image_type = normalized_forced_type or analyzed_image_type
         
         # Determinar modelo a usar
         # Para MEJORAR CALIDAD: Por defecto usamos el modelo x4 (RealESRGAN_x4plus) incluso para 2x
@@ -153,7 +175,7 @@ async def upscale_image(
                 # Auto-selección: Priorizar calidad (usar 4x) salvo que sea muy grande
                 
                 # Si es anime, usar modelo anime
-                if analysis.get("image_type") == "anime":
+                if effective_image_type == "anime":
                     model_key = "4x_anime"
                 else:
                     model_key = "4x" # RealESRGAN_x4plus (mejor calidad general)
@@ -199,6 +221,7 @@ async def upscale_image(
         # Perfil de restauración para anti artefactos y sharpen por región
         processing_profile = {
             "apply_restoration": analysis.get("apply_restoration", False),
+            "uniform_restore_mode": analysis.get("uniform_restore_mode", False),
             "noise_level": analysis.get("noise_level", "low"),
             "compression_score": analysis.get("compression_score", 0.0),
             "pixelation_score": analysis.get("pixelation_score", 0.0),
@@ -223,6 +246,9 @@ async def upscale_image(
         result["output_filename"] = output_filename
         result["output_size_mb"] = round(get_file_size_mb(output_path), 2)
         result["processing_time_seconds"] = round(elapsed_seconds, 2)
+        result["analysis_image_type"] = analyzed_image_type
+        result["effective_image_type"] = effective_image_type
+        result["type_overridden"] = bool(normalized_forced_type and normalized_forced_type != analyzed_image_type)
         if cpu_fallback_note:
             result["processing_warning"] = cpu_fallback_note
         

@@ -164,6 +164,8 @@ async function handleProcess() {
         // Obtener configuración de mejora de rostros
         const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
         const faceEnhance = faceEnhanceBtn ? faceEnhanceBtn.checked : false;
+        const forcedImageType = getForcedImageTypeFromUI();
+        const effectiveImageType = forcedImageType || currentAnalysis?.image_type;
 
         // Determinar modelo a usar
         // Lógica: Si el usuario selecciona una escala, respetamos esa escala.
@@ -171,7 +173,7 @@ async function handleProcess() {
         // En 2x, dejamos que el backend use el default (que suele ser un modelo ligero o resize).
 
         let modelToSend = null;
-        if (currentAnalysis?.image_type === 'anime' && selectedScale === '4x') {
+        if (effectiveImageType === 'anime' && selectedScale === '4x') {
             modelToSend = 'RealESRGAN_x4plus_anime_6B';
         }
 
@@ -180,7 +182,8 @@ async function handleProcess() {
             currentFile,
             selectedScale,
             modelToSend,
-            faceEnhance
+            faceEnhance,
+            forcedImageType
         );
 
         // Completar barra de progreso
@@ -203,6 +206,23 @@ async function handleProcess() {
     } finally {
         isProcessing = false;
     }
+}
+
+function getForcedImageTypeFromUI() {
+    const overrideBtn = document.getElementById('imageTypeOverrideBtn');
+    if (!overrideBtn || !overrideBtn.checked || !currentAnalysis?.image_type) {
+        return null;
+    }
+
+    if (currentAnalysis.image_type === 'anime') {
+        return 'photo';
+    }
+
+    if (currentAnalysis.image_type === 'photo' || currentAnalysis.image_type === 'filtered_photo') {
+        return 'anime';
+    }
+
+    return null;
 }
 
 /**

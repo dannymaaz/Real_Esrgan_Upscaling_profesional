@@ -17,6 +17,7 @@ class UIController {
 
         const typeNames = {
             'photo': 'Fotografía Real',
+            'filtered_photo': 'Fotografía con Filtro',
             'anime': 'Anime/Ilustración',
             'illustration': 'Ilustración'
         };
@@ -59,6 +60,27 @@ class UIController {
         }
 
         recommendation.style.display = 'flex';
+
+        // Opción de corrección manual del tipo detectado.
+        const overrideContainer = document.getElementById('imageTypeOverrideContainer');
+        const overrideBtn = document.getElementById('imageTypeOverrideBtn');
+        const overrideLabel = document.getElementById('imageTypeOverrideLabel');
+        const overrideDescription = document.getElementById('imageTypeOverrideDescription');
+        if (overrideContainer && overrideBtn && overrideLabel && overrideDescription) {
+            overrideBtn.checked = false;
+
+            if (analysis.image_type === 'anime') {
+                overrideContainer.style.display = 'block';
+                overrideLabel.textContent = 'Tratar como Fotografía real';
+                overrideDescription.textContent = 'Actívalo si la imagen detectada como anime es en realidad una foto de una persona o escena real.';
+            } else if (analysis.image_type === 'photo' || analysis.image_type === 'filtered_photo') {
+                overrideContainer.style.display = 'block';
+                overrideLabel.textContent = 'Tratar como Anime/Ilustración';
+                overrideDescription.textContent = 'Actívalo solo si la imagen es realmente anime o ilustración digital.';
+            } else {
+                overrideContainer.style.display = 'none';
+            }
+        }
 
         // Seleccionar automáticamente la escala recomendada
         const scaleButtons = document.querySelectorAll('.scale-btn');
@@ -201,6 +223,11 @@ class UIController {
                 <span class="info-label">Tiempo:</span>
                 <span class="info-value">${data.processing_time_seconds ?? '-'} s</span>
             </div>
+            ${data.type_overridden ? `
+            <div class="info-row">
+                <span class="info-label">Tipo corregido:</span>
+                <span class="info-value">${data.analysis_image_type} → ${data.effective_image_type}</span>
+            </div>` : ''}
         `;
 
         // Configurar botón de descarga
@@ -363,6 +390,15 @@ class UIController {
 
         // Resetear input de archivo
         document.getElementById('fileInput').value = '';
+
+        const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
+        if (faceEnhanceBtn) faceEnhanceBtn.checked = false;
+
+        const imageTypeOverrideBtn = document.getElementById('imageTypeOverrideBtn');
+        if (imageTypeOverrideBtn) imageTypeOverrideBtn.checked = false;
+
+        const imageTypeOverrideContainer = document.getElementById('imageTypeOverrideContainer');
+        if (imageTypeOverrideContainer) imageTypeOverrideContainer.style.display = 'none';
     }
 
     /**

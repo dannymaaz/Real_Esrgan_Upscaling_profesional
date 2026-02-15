@@ -59,9 +59,10 @@ class APIClient {
      * @param {string} scale - Escala ('2x' o '4x')
      * @param {string} model - Modelo específico (opcional)
      * @param {boolean} faceEnhance - Activar mejora de rostros (opcional)
+     * @param {string|null} forcedImageType - Override manual del tipo (opcional)
      * @returns {Promise<Object>} Resultado del procesamiento
      */
-    static async upscaleImage(file, scale, model = null, faceEnhance = false) {
+    static async upscaleImage(file, scale, model = null, faceEnhance = false, forcedImageType = null) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('scale', scale);
@@ -74,6 +75,9 @@ class APIClient {
         // Enviar flag de mejora de rostros
         if (faceEnhance) {
             formData.append('face_enhance', 'true');
+        }
+        if (forcedImageType) {
+            formData.append('forced_image_type', forcedImageType);
         }
 
         return await this.requestJson('/api/upscale', {

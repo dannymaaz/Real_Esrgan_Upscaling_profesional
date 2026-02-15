@@ -18,6 +18,9 @@ class ImageAnalyzer:
         self.face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
+        self.profile_face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_profileface.xml'
+        )
         self.eye_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_eye.xml'
         )
@@ -44,7 +47,6 @@ class ImageAnalyzer:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         # Análisis de características
-        image_type = self._detect_image_type(img)
         blur_metrics = self._detect_blur(gray)
         sharpness = blur_metrics["laplacian_score"]
         tenengrad = blur_metrics["tenengrad_score"]
@@ -52,6 +54,14 @@ class ImageAnalyzer:
         compression_metrics = self._detect_compression_artifacts(gray)
         pixelation_metrics = self._detect_pixelation(gray)
         face_info = self._detect_faces_info(img)
+        image_type = self._detect_image_type(
+            img=img,
+            blur_metrics=blur_metrics,
+            compression_metrics=compression_metrics,
+            pixelation_metrics=pixelation_metrics,
+            noise_level=noise_level,
+            face_info=face_info
+        )
         # Para decisiones de UX/procesamiento, solo contar rostros relevantes.
         has_faces = face_info["has_faces"] and face_info["importance"] in {"medium", "high"}
         
@@ -86,9 +96,16 @@ class ImageAnalyzer:
             "is_pixelated": pixelation_metrics["is_pixelated"],
             "pixelation_score": round(pixelation_metrics["pixelation_score"], 3),
             "has_faces": has_faces,
+            "face_count": face_info.get("count", 0),
             "face_importance": face_info["importance"],
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
+            "uniform_restore_mode": self._should_use_uniform_restore(
+                blur_metrics,
+                noise_level,
+                compression_metrics,
+                pixelation_metrics
+            ),
             "apply_restoration": self._should_apply_restoration(
                 blur_metrics,
                 noise_level,
@@ -131,7 +148,15 @@ class ImageAnalyzer:
             "blur_severity": severity
         }
     
-    def _detect_image_type(self, img: np.ndarray) -> str:
+    def _detect_image_type(
+        self,
+        img: np.ndarray,
+        blur_metrics: Dict = None,
+        compression_metrics: Dict = None,
+        pixelation_metrics: Dict = None,
+        noise_level: str = "low",
+        face_info: Dict = None
+    ) -> str:
         """
         Detecta el tipo de imagen (foto real, anime, ilustración)
         
@@ -155,16 +180,56 @@ class ImageAnalyzer:
         edges = cv2.Canny(gray, 50, 150)
         edge_density = np.sum(edges > 0) / edges.size
         
-        # Heurística simple para clasificación
-        # Anime tiende a tener alta saturación y bordes definidos
-        if saturation > 100 and edge_density > 0.05:
+        blur_metrics = blur_metrics or {}
+        compression_metrics = compression_metrics or {}
+        pixelation_metrics = pixelation_metrics or {}
+        face_info = face_info or {}
+
+        compression_score = float(compression_metrics.get("compression_score", 0.0))
+        pixelation_score = float(pixelation_metrics.get("pixelation_score", 0.0))
+        blur_severity = blur_metrics.get("blur_severity", "low")
+        has_relevant_faces = face_info.get("has_faces", False) and face_info.get("importance") in {"medium", "high"}
+
+        # Score de anime conservador para evitar falsos positivos en fotos con filtros.
+        anime_score = 0.0
+        if saturation > 118:
+            anime_score += 1.0
+        if edge_density > 0.085:
+            anime_score += 1.0
+        if color_variance < 35:
+            anime_score += 0.65
+        if pixelation_score < 0.18 and compression_score < 0.2:
+            anime_score += 0.35
+        if noise_level == "low":
+            anime_score += 0.15
+
+        if blur_severity in {"medium", "strong"}:
+            anime_score -= 0.4
+        if compression_score > 0.32 or pixelation_score > 0.25:
+            anime_score -= 0.45
+        if has_relevant_faces:
+            anime_score -= 0.9
+
+        if anime_score >= 2.0:
             return "anime"
-        # Ilustraciones tienen colores más uniformes
-        elif color_variance < 30 and saturation > 80:
+
+        # Foto real con filtros/compresión tipo redes sociales.
+        if (
+            saturation > 90
+            and (
+                compression_score > 0.35
+                or pixelation_score > 0.22
+                or blur_severity in {"medium", "strong"}
+            )
+        ):
+            return "filtered_photo"
+
+        # Ilustraciones (no anime) tienden a bordes más suaves y paleta uniforme.
+        if color_variance < 26 and saturation > 70 and edge_density < 0.04:
             return "illustration"
-        # Por defecto, asumir foto real
-        else:
-            return "photo"
+
+        # Por defecto, asumir foto real.
+        return "photo"
     
     def _calculate_sharpness(self, img: np.ndarray) -> float:
         """
@@ -282,21 +347,68 @@ class ImageAnalyzer:
         try:
             # Validar cascadas disponibles
             if self.face_cascade.empty():
-                return {"has_faces": False, "importance": "none"}
+                return {"has_faces": False, "importance": "none", "count": 0}
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             h, w = gray.shape
 
-            min_face = max(48, int(min(h, w) * 0.07))
-            faces = self.face_cascade.detectMultiScale(
+            min_face = max(32, int(min(h, w) * 0.045))
+
+            detections = []
+            faces_primary = self.face_cascade.detectMultiScale(
                 gray,
                 scaleFactor=1.08,
-                minNeighbors=7,
+                minNeighbors=6,
                 minSize=(min_face, min_face)
             )
+            detections.extend([(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in faces_primary])
 
-            if len(faces) == 0:
-                return {"has_faces": False, "importance": "none"}
+            faces_relaxed = self.face_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.05,
+                minNeighbors=4,
+                minSize=(max(24, int(min_face * 0.85)), max(24, int(min_face * 0.85)))
+            )
+            detections.extend([(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in faces_relaxed])
+
+            if not self.profile_face_cascade.empty():
+                faces_profile = self.profile_face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.06,
+                    minNeighbors=5,
+                    minSize=(max(24, int(min_face * 0.85)), max(24, int(min_face * 0.85)))
+                )
+                detections.extend([(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in faces_profile])
+
+            # Segundo pase en imagen reescalada para rostros pequeños/lejanos.
+            upscale_factor = 1.5
+            if min(h, w) >= 240:
+                gray_large = cv2.resize(
+                    gray,
+                    (int(w * upscale_factor), int(h * upscale_factor)),
+                    interpolation=cv2.INTER_CUBIC
+                )
+                faces_large = self.face_cascade.detectMultiScale(
+                    gray_large,
+                    scaleFactor=1.05,
+                    minNeighbors=4,
+                    minSize=(max(24, int(min_face * upscale_factor * 0.75)), max(24, int(min_face * upscale_factor * 0.75)))
+                )
+                for x, y, fw, fh in faces_large:
+                    detections.append(
+                        (
+                            int(x / upscale_factor),
+                            int(y / upscale_factor),
+                            int(fw / upscale_factor),
+                            int(fh / upscale_factor)
+                        )
+                    )
+
+            if len(detections) == 0:
+                return {"has_faces": False, "importance": "none", "count": 0}
+
+            # Deduplicar rectángulos solapados.
+            faces = self._deduplicate_face_boxes(detections)
 
             confirmed_faces = []
             for x, y, fw, fh in faces:
@@ -312,35 +424,89 @@ class ImageAnalyzer:
                     eyes = self.eye_cascade.detectMultiScale(
                         upper_half,
                         scaleFactor=1.1,
-                        minNeighbors=6,
+                        minNeighbors=4,
                         minSize=(min_eye, min_eye)
                     )
                     eyes_found = len(eyes)
 
                 area_ratio = (fw * fh) / max(1, (h * w))
-                # Aceptar detección solo si parece rostro de verdad.
-                # Permitimos "cara grande" aunque no detecte ojos por iluminación/ángulo.
-                if eyes_found >= 1 or area_ratio >= 0.22:
+                center_y = (y + fh * 0.5) / max(1, h)
+
+                confidence = 0.0
+                if eyes_found >= 1:
+                    confidence += 1.1
+                if fw >= max(32, int(min(h, w) * 0.04)):
+                    confidence += 0.45
+                if area_ratio >= 0.0025:
+                    confidence += 0.45
+                if 0.08 <= center_y <= 0.95:
+                    confidence += 0.2
+                if area_ratio >= 0.015:
+                    confidence += 0.35
+
+                if confidence >= 1.2:
                     confirmed_faces.append((x, y, fw, fh))
 
             if len(confirmed_faces) == 0:
-                return {"has_faces": False, "importance": "none"}
+                return {"has_faces": False, "importance": "none", "count": 0}
 
             frame_area = h * w
             largest_face_area = max((fw * fh for _, _, fw, fh in confirmed_faces), default=0)
             ratio = largest_face_area / max(1, frame_area)
 
-            if ratio > 0.15 or len(confirmed_faces) >= 3:
+            if ratio > 0.12 or len(confirmed_faces) >= 3:
                 importance = "high"
-            elif ratio > 0.05:
+            elif ratio > 0.02 or len(confirmed_faces) >= 2:
                 importance = "medium"
             else:
                 importance = "low"
 
-            return {"has_faces": True, "importance": importance}
+            return {"has_faces": True, "importance": importance, "count": len(confirmed_faces)}
         except Exception:
             # Si falla la detección, asumir que no hay rostros
-            return {"has_faces": False, "importance": "none"}
+            return {"has_faces": False, "importance": "none", "count": 0}
+
+    def _deduplicate_face_boxes(self, boxes) -> list:
+        """Elimina detecciones casi duplicadas usando IoU."""
+        if not boxes:
+            return []
+
+        boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
+        selected = []
+
+        for candidate in boxes:
+            keep = True
+            for chosen in selected:
+                if self._box_iou(candidate, chosen) > 0.35:
+                    keep = False
+                    break
+            if keep:
+                selected.append(candidate)
+
+        return selected
+
+    def _box_iou(self, a, b) -> float:
+        """Calcula IoU entre dos bounding boxes (x, y, w, h)."""
+        ax1, ay1, aw, ah = a
+        bx1, by1, bw, bh = b
+        ax2, ay2 = ax1 + aw, ay1 + ah
+        bx2, by2 = bx1 + bw, by1 + bh
+
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
+
+        if inter_area <= 0:
+            return 0.0
+
+        area_a = aw * ah
+        area_b = bw * bh
+        return inter_area / max(1e-6, (area_a + area_b - inter_area))
 
     def _detect_faces(self, img: np.ndarray) -> bool:
         """Compatibilidad: devuelve True/False para detección de rostros."""
@@ -360,6 +526,25 @@ class ImageAnalyzer:
             compression_metrics["has_compression_artifacts"],
             pixelation_metrics["is_pixelated"]
         ])
+
+    def _should_use_uniform_restore(
+        self,
+        blur_metrics: Dict,
+        noise_level: str,
+        compression_metrics: Dict,
+        pixelation_metrics: Dict
+    ) -> bool:
+        """Activa un perfil uniforme para escenas muy degradadas."""
+        blur_severity = blur_metrics.get("blur_severity", "low")
+        compression_score = float(compression_metrics.get("compression_score", 0.0))
+        pixelation_score = float(pixelation_metrics.get("pixelation_score", 0.0))
+
+        return (
+            pixelation_score > 0.34
+            or (blur_severity == "strong" and pixelation_score > 0.22)
+            or (blur_severity == "strong" and compression_score > 0.5)
+            or (blur_severity == "strong" and noise_level == "high")
+        )
     
     def _recommend_scale(
         self,
@@ -473,6 +658,7 @@ class ImageAnalyzer:
         # Nota sobre tipo
         type_names = {
             "photo": "Fotografía real",
+            "filtered_photo": "Fotografía real con filtros/compresión",
             "anime": "Anime/Ilustración",
             "illustration": "Ilustración"
         }
@@ -500,5 +686,7 @@ class ImageAnalyzer:
 
         if pixelation_metrics and pixelation_metrics.get("is_pixelated"):
             notes.append("Pixelación detectada")
+            if blur_metrics and blur_metrics.get("blur_severity") == "strong":
+                notes.append("Se aplicará restauración uniforme por degradación severa")
 
         return notes

@@ -364,6 +364,7 @@ class RealESRGANUpscaler:
         noise_level = profile.get("noise_level", "low")
         compression_score = float(profile.get("compression_score", 0.0))
         blur_severity = profile.get("blur_severity", "low")
+        uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
 
         denoise_strength = 0
         if noise_level == "high":
@@ -376,6 +377,9 @@ class RealESRGANUpscaler:
         elif compression_score > 0.45:
             denoise_strength = max(denoise_strength, 4)
 
+        if uniform_restore_mode:
+            denoise_strength = max(denoise_strength, 6)
+
         if denoise_strength == 0:
             return img
 
@@ -383,8 +387,16 @@ class RealESRGANUpscaler:
             img, None, denoise_strength, denoise_strength, 7, 21
         )
 
+        if uniform_restore_mode:
+            # Suaviza transiciones de bloques en fotos severamente degradadas.
+            denoised = cv2.bilateralFilter(denoised, d=5, sigmaColor=28, sigmaSpace=28)
+
         # Mantener textura natural en piel al mezclar con la imagen original.
-        if blur_severity == "strong":
+        if uniform_restore_mode and blur_severity == "strong":
+            keep_original = 0.22
+        elif uniform_restore_mode:
+            keep_original = 0.3
+        elif blur_severity == "strong":
             keep_original = 0.28
         elif blur_severity == "medium":
             keep_original = 0.35
@@ -412,6 +424,7 @@ class RealESRGANUpscaler:
         skin_mask = self._build_skin_mask(img)
 
         blur_severity = profile.get("blur_severity", "low")
+        uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
         if blur_severity == "strong":
             base_amount = 0.24
         elif blur_severity == "medium":
@@ -419,12 +432,24 @@ class RealESRGANUpscaler:
         else:
             base_amount = 0.12
 
-        sharpen_strength = np.full(gray.shape, base_amount, dtype=np.float32)
+        if uniform_restore_mode:
+            if blur_severity == "strong":
+                base_amount = 0.14
+            elif blur_severity == "medium":
+                base_amount = 0.1
+            else:
+                base_amount = 0.08
 
-        # Menos sharpen en piel (pies/manos/cara)
-        sharpen_strength = np.where(skin_mask > 0.2, 0.06, sharpen_strength)
-        # En contornos fuertes limitar para evitar halos/artefactos
-        sharpen_strength = np.where(edge_mask > 0.2, np.minimum(sharpen_strength, 0.14), sharpen_strength)
+            sharpen_strength = np.full(gray.shape, base_amount, dtype=np.float32)
+            # Evitar halos en bordes duros manteniendo el acabado uniforme.
+            sharpen_strength = np.where(edge_mask > 0.2, np.minimum(sharpen_strength, base_amount * 0.8), sharpen_strength)
+        else:
+            sharpen_strength = np.full(gray.shape, base_amount, dtype=np.float32)
+
+            # Menos sharpen en piel (pies/manos/cara)
+            sharpen_strength = np.where(skin_mask > 0.2, 0.06, sharpen_strength)
+            # En contornos fuertes limitar para evitar halos/artefactos
+            sharpen_strength = np.where(edge_mask > 0.2, np.minimum(sharpen_strength, 0.14), sharpen_strength)
 
         compression_score = float(profile.get("compression_score", 0.0))
         noise_level = profile.get("noise_level", "low")
