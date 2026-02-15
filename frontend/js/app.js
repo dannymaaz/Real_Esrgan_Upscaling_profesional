@@ -188,8 +188,12 @@ async function handleProcess() {
 
     } catch (error) {
         console.error("Processing error:", error);
+        const message = (error && error.message) ? String(error.message) : '';
+        const normalizedMessage = message.includes('Failed to fetch')
+            ? 'No se pudo conectar con el servidor durante el escalado. Verifica que el backend siga activo.'
+            : (message || "Error desconocido al procesar imagen");
         UIController.closeError();
-        UIController.showError(error.message || "Error desconocido al procesar imagen");
+        UIController.showError(normalizedMessage);
         UIController.reset();
     } finally {
         isProcessing = false;

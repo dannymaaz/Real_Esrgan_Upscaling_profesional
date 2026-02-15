@@ -395,6 +395,18 @@ class RealESRGANUpscaler:
         blended = img.astype(np.float32) * (1.0 - sharpen_strength_3c) + unsharp.astype(np.float32) * sharpen_strength_3c
 
         return np.clip(blended, 0, 255).astype(np.uint8)
+
+    def _build_skin_mask(self, img: np.ndarray) -> np.ndarray:
+        """
+        Genera máscara aproximada de piel en rango [0, 1] para evitar oversharpen en rostros/manos.
+        Usa espacio YCrCb por estabilidad en iluminación.
+        """
+        ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+        lower = np.array([0, 133, 77], dtype=np.uint8)
+        upper = np.array([255, 173, 127], dtype=np.uint8)
+        mask = cv2.inRange(ycrcb, lower, upper)
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+        return mask.astype(np.float32) / 255.0
     
     def get_available_models(self) -> Dict:
         """

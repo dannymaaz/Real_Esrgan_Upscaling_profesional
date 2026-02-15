@@ -106,47 +106,67 @@ async def upscale_image(
         # Para MEJORAR CALIDAD: Por defecto usamos el modelo x4 (RealESRGAN_x4plus) incluso para 2x
         # y luego redimensionamos. PERO si la imagen es muy grande, esto podría exceder el límite de memoria/dimensión.
         # Límite seguro aprox: 8000px de altura final intermedia.
-        
+
         LIMIT_DIMENSION = 8000
+        cpu_safe_mode = upscaler.device == "cpu"
+        cpu_fallback_note = None
+
+        # En algunas instalaciones CPU, el modelo 4x puede cerrar el proceso nativo sin excepción.
+        # Modo seguro: forzar modelo 2x y reescalar cuando se solicita 4x.
+        if cpu_safe_mode:
+            if scale == "2x":
+                model_key = "2x"
+                resize_factor = 1.0
+                cpu_fallback_note = "Modo CPU seguro: se utilizó RealESRGAN_x2plus para evitar cierres inesperados."
+            elif scale == "4x":
+                model_key = "2x"
+                resize_factor = 2.0
+                cpu_fallback_note = "Modo CPU seguro: se utilizó RealESRGAN_x2plus con redimensionado a 4x para evitar cierres inesperados."
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Escala no válida: {scale}. Use '2x' o '4x'"
+                )
+
         # Verificar si 4x excedería los límites
         if (original_width * 4 > LIMIT_DIMENSION or original_height * 4 > LIMIT_DIMENSION) and scale == "2x":
             use_2x_native = True # Forzar uso nativo de 2x para evitar error de "too large"
         else:
             use_2x_native = False
 
-        resize_factor = 1.0
-        
-        model_key_from_request = _normalize_model_key(model)
-
-        if model_key_from_request and not use_2x_native:
-            model_key = model_key_from_request
-            # Si el usuario eligió un modelo específico, respetamos su elección de escala
-            # Pero si eligió escala 2x con modelo 4x, debemos redimensionar
-            if scale == "2x" and MODELS[model_key]["scale"] == 4:
-                resize_factor = 0.5
-        elif use_2x_native:
-            # Forzar modelo 2x porque la imagen es muy grande para 4x
-            model_key = "2x" # RealESRGAN_x2plus
+        if not cpu_safe_mode:
             resize_factor = 1.0
-        else:
-            # Auto-selección: Priorizar calidad (usar 4x) salvo que sea muy grande
-            
-            # Si es anime, usar modelo anime
-            if analysis.get("image_type") == "anime":
-                model_key = "4x_anime"
-            else:
-                model_key = "4x" # RealESRGAN_x4plus (mejor calidad general)
-            
-            # Ajustar factor de redimensionamiento según escala solicitada
-            if scale == "2x":
-                resize_factor = 0.5
-            elif scale == "4x":
+            model_key_from_request = _normalize_model_key(model)
+
+            if model_key_from_request and not use_2x_native:
+                model_key = model_key_from_request
+                # Si el usuario eligió un modelo específico, respetamos su elección de escala
+                # Pero si eligió escala 2x con modelo 4x, debemos redimensionar
+                if scale == "2x" and MODELS[model_key]["scale"] == 4:
+                    resize_factor = 0.5
+            elif use_2x_native:
+                # Forzar modelo 2x porque la imagen es muy grande para 4x
+                model_key = "2x" # RealESRGAN_x2plus
                 resize_factor = 1.0
             else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Escala no válida: {scale}. Use '2x' o '4x'"
-                )
+                # Auto-selección: Priorizar calidad (usar 4x) salvo que sea muy grande
+                
+                # Si es anime, usar modelo anime
+                if analysis.get("image_type") == "anime":
+                    model_key = "4x_anime"
+                else:
+                    model_key = "4x" # RealESRGAN_x4plus (mejor calidad general)
+                
+                # Ajustar factor de redimensionamiento según escala solicitada
+                if scale == "2x":
+                    resize_factor = 0.5
+                elif scale == "4x":
+                    resize_factor = 1.0
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Escala no válida: {scale}. Use '2x' o '4x'"
+                    )
         
         # Generar nombre de archivo de salida
         # Incluir indicador de face_enhance en el nombre
@@ -199,6 +219,8 @@ async def upscale_image(
         result["input_filename"] = input_filename
         result["output_filename"] = output_filename
         result["output_size_mb"] = round(get_file_size_mb(output_path), 2)
+        if cpu_fallback_note:
+            result["processing_warning"] = cpu_fallback_note
         
         # Limpiar archivos antiguos en segundo plano
         cleanup_old_files(UPLOADS_DIR)
