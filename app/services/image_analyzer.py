@@ -57,7 +57,14 @@ class ImageAnalyzer:
         
         # Determinar escala recomendada
         recommended_scale = self._recommend_scale(
-            width, height, image_type, sharpness
+            width=width,
+            height=height,
+            image_type=image_type,
+            sharpness=sharpness,
+            noise_level=noise_level,
+            compression_metrics=compression_metrics,
+            pixelation_metrics=pixelation_metrics,
+            blur_metrics=blur_metrics
         )
         
         # Determinar modelo recomendado
@@ -355,7 +362,15 @@ class ImageAnalyzer:
         ])
     
     def _recommend_scale(
-        self, width: int, height: int, image_type: str, sharpness: float
+        self,
+        width: int,
+        height: int,
+        image_type: str,
+        sharpness: float,
+        noise_level: str = "low",
+        compression_metrics: Dict = None,
+        pixelation_metrics: Dict = None,
+        blur_metrics: Dict = None
     ) -> int:
         """
         Recomienda la escala óptima basada en las características de la imagen
@@ -370,6 +385,20 @@ class ImageAnalyzer:
             Escala recomendada (2 o 4)
         """
         total_pixels = width * height
+        compression_metrics = compression_metrics or {}
+        pixelation_metrics = pixelation_metrics or {}
+        blur_metrics = blur_metrics or {}
+
+        # Para imágenes de Instagram/altamente comprimidas, 2x produce resultados más naturales.
+        if (
+            noise_level in {"medium", "high"}
+            and (
+                compression_metrics.get("compression_score", 0.0) > 0.45
+                or pixelation_metrics.get("pixelation_score", 0.0) > 0.25
+                or blur_metrics.get("blur_severity") in {"medium", "strong"}
+            )
+        ):
+            return 2
         
         # Si la imagen ya es grande (>2MP), recomendar 2x
         if total_pixels > 2_000_000:

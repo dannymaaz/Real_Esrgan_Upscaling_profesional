@@ -7,6 +7,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from typing import Optional
+from time import perf_counter
 
 from app.config import UPLOADS_DIR, OUTPUTS_DIR, MODELS
 from app.utils.file_handler import (
@@ -205,6 +206,7 @@ async def upscale_image(
         }
 
         # Procesar upscaling
+        started_at = perf_counter()
         result = upscaler.upscale_image(
             input_path=input_path,
             output_path=output_path,
@@ -214,11 +216,13 @@ async def upscale_image(
             processing_profile=processing_profile,
             face_fidelity="high" if auto_face_enhance else "balanced"
         )
+        elapsed_seconds = perf_counter() - started_at
         
         # Agregar información adicional
         result["input_filename"] = input_filename
         result["output_filename"] = output_filename
         result["output_size_mb"] = round(get_file_size_mb(output_path), 2)
+        result["processing_time_seconds"] = round(elapsed_seconds, 2)
         if cpu_fallback_note:
             result["processing_warning"] = cpu_fallback_note
         

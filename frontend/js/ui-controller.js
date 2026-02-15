@@ -197,6 +197,10 @@ class UIController {
                 <span class="info-label">Mejora Facial:</span>
                 <span class="info-value">${data.face_enhance ? 'Sí' : 'No'}</span>
             </div>
+            <div class="info-row">
+                <span class="info-label">Tiempo:</span>
+                <span class="info-value">${data.processing_time_seconds ?? '-'} s</span>
+            </div>
         `;
 
         // Configurar botón de descarga

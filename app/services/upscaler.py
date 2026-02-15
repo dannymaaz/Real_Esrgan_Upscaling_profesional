@@ -312,7 +312,11 @@ class RealESRGANUpscaler:
         if resize_factor != 1.0:
             new_width = int(output.shape[1] * resize_factor)
             new_height = int(output.shape[0] * resize_factor)
-            output = cv2.resize(output, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+            if resize_factor > 1.0:
+                resize_interpolation = cv2.INTER_CUBIC
+            else:
+                resize_interpolation = cv2.INTER_AREA
+            output = cv2.resize(output, (new_width, new_height), interpolation=resize_interpolation)
 
         # Post-proceso adaptativo anti artefactos
         # Desactivar si la imagen es muy grande (>8MP) para evitar OOM
@@ -353,18 +357,48 @@ class RealESRGANUpscaler:
 
     def _apply_adaptive_artifact_reduction(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """
-        Reduce ruido/artefactos de compresión.
-        NOTA: Desactivado temporalmente para evitar suavizado excesivo y problemas de memoria.
-        Real-ESRGAN ya realiza una restauración suficiente.
+        Reduce ruido/artefactos de compresión de forma conservadora para evitar piel plástica.
         """
-        return img
+        img = self._ensure_bgr_uint8(img)
+
+        noise_level = profile.get("noise_level", "low")
+        compression_score = float(profile.get("compression_score", 0.0))
+        blur_severity = profile.get("blur_severity", "low")
+
+        denoise_strength = 0
+        if noise_level == "high":
+            denoise_strength = 7
+        elif noise_level == "medium":
+            denoise_strength = 4
+
+        if compression_score > 0.8:
+            denoise_strength = max(denoise_strength, 6)
+        elif compression_score > 0.45:
+            denoise_strength = max(denoise_strength, 4)
+
+        if denoise_strength == 0:
+            return img
+
+        denoised = cv2.fastNlMeansDenoisingColored(
+            img, None, denoise_strength, denoise_strength, 7, 21
+        )
+
+        # Mantener textura natural en piel al mezclar con la imagen original.
+        if blur_severity == "strong":
+            keep_original = 0.28
+        elif blur_severity == "medium":
+            keep_original = 0.35
+        else:
+            keep_original = 0.45
+
+        return cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
 
     def _apply_region_aware_sharpen(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """Sharpen por regiones: menos en piel/contornos, más en ropa/fondo."""
         img = self._ensure_bgr_uint8(img)
-        blurred = cv2.GaussianBlur(img, (0, 0), 1.2)
+        blurred = cv2.GaussianBlur(img, (0, 0), 0.8)
         # addWeighted output depth matches src1 detph, usually uint8 here
-        unsharp = cv2.addWeighted(img, 1.55, blurred, -0.55, 0)
+        unsharp = cv2.addWeighted(img, 1.25, blurred, -0.25, 0)
         
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         edge_map = cv2.Canny(gray, 80, 180)
@@ -379,18 +413,23 @@ class RealESRGANUpscaler:
 
         blur_severity = profile.get("blur_severity", "low")
         if blur_severity == "strong":
-            base_amount = 0.65
+            base_amount = 0.24
         elif blur_severity == "medium":
-            base_amount = 0.5
+            base_amount = 0.18
         else:
-            base_amount = 0.35
+            base_amount = 0.12
 
         sharpen_strength = np.full(gray.shape, base_amount, dtype=np.float32)
 
         # Menos sharpen en piel (pies/manos/cara)
-        sharpen_strength = np.where(skin_mask > 0.2, 0.16, sharpen_strength)
+        sharpen_strength = np.where(skin_mask > 0.2, 0.06, sharpen_strength)
         # En contornos fuertes limitar para evitar halos/artefactos
-        sharpen_strength = np.where(edge_mask > 0.2, np.minimum(sharpen_strength, 0.28), sharpen_strength)
+        sharpen_strength = np.where(edge_mask > 0.2, np.minimum(sharpen_strength, 0.14), sharpen_strength)
+
+        compression_score = float(profile.get("compression_score", 0.0))
+        noise_level = profile.get("noise_level", "low")
+        if compression_score > 0.7 or noise_level == "high":
+            sharpen_strength *= 0.7
 
         sharpen_strength_3c = np.repeat(sharpen_strength[:, :, None], 3, axis=2)
         
