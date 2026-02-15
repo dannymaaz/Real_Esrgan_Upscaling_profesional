@@ -26,6 +26,20 @@ router = APIRouter(prefix="/api", tags=["upload"])
 analyzer = ImageAnalyzer()
 upscaler = RealESRGANUpscaler()
 
+def _normalize_model_key(model: Optional[str]) -> Optional[str]:
+    """Acepta clave interna (2x/4x/4x_anime) o nombre del modelo RealESRGAN."""
+    if not model:
+        return None
+
+    if model in MODELS:
+        return model
+
+    for key, info in MODELS.items():
+        if model == info.get("name"):
+            return key
+
+    return None
+
 
 @router.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
@@ -102,8 +116,10 @@ async def upscale_image(
 
         resize_factor = 1.0
         
-        if model and model in MODELS and not use_2x_native:
-            model_key = model
+        model_key_from_request = _normalize_model_key(model)
+
+        if model_key_from_request and not use_2x_native:
+            model_key = model_key_from_request
             # Si el usuario eligió un modelo específico, respetamos su elección de escala
             # Pero si eligió escala 2x con modelo 4x, debemos redimensionar
             if scale == "2x" and MODELS[model_key]["scale"] == 4:

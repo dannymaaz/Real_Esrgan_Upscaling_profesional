@@ -234,14 +234,17 @@ class ImageAnalyzer:
         # como indicador de ruido
         h, w = gray.shape
         noise_scores = []
-        
-        # Muestrear varias regiones
-        for _ in range(10):
-            y = np.random.randint(0, max(1, h - 50))
-            x = np.random.randint(0, max(1, w - 50))
-            region = gray[y:y+50, x:x+50]
-            if region.size > 0:
-                noise_scores.append(np.std(region))
+
+        # Muestreo determinista en rejilla para resultados reproducibles
+        window = 50
+        step_y = max(window, h // 4)
+        step_x = max(window, w // 4)
+
+        for y in range(0, max(1, h - window + 1), step_y):
+            for x in range(0, max(1, w - window + 1), step_x):
+                region = gray[y:y + window, x:x + window]
+                if region.size > 0:
+                    noise_scores.append(float(np.std(region)))
         
         avg_noise = np.mean(noise_scores) if noise_scores else 0
         
