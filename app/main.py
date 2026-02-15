@@ -39,19 +39,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class NoCacheStaticFiles(StaticFiles):
+    """Sirve archivos estáticos con cache desactivada."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
 # Incluir rutas de API
 app.include_router(upload.router)
 
 # Servir archivos estáticos del frontend
-app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
-app.mount("/css", StaticFiles(directory=FRONTEND_DIR / "css"), name="css")
-app.mount("/js", StaticFiles(directory=FRONTEND_DIR / "js"), name="js")
+app.mount("/assets", NoCacheStaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+app.mount("/css", NoCacheStaticFiles(directory=FRONTEND_DIR / "css"), name="css")
+app.mount("/js", NoCacheStaticFiles(directory=FRONTEND_DIR / "js"), name="js")
 
 
 @app.get("/")
 async def root():
     """Sirve la página principal de la aplicación"""
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return FileResponse(
+        FRONTEND_DIR / "index.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 
 @app.get("/health")

@@ -369,7 +369,12 @@ class UIController {
         const errorModal = document.getElementById('errorModal');
         const errorMessage = document.getElementById('errorMessage');
 
-        errorMessage.textContent = message;
+        const raw = (message ?? '').toString();
+        const normalized = raw.includes('Failed to fetch')
+            ? 'No se pudo conectar con el servidor. Verifica que este activo en http://127.0.0.1:8000'
+            : raw;
+
+        errorMessage.textContent = normalized || 'Ocurrio un error inesperado';
         errorModal.style.display = 'flex';
     }
 
