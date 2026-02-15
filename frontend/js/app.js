@@ -121,10 +121,11 @@ async function handleFileSelect(file) {
         // AUTO-DETECCIÓN DE ROSTROS
         const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
         if (faceEnhanceBtn) {
-            // Activar automáticamente si tiene caras
-            if (currentAnalysis.has_faces) {
+            // Activar automáticamente solo con rostros relevantes (evita falsos positivos)
+            const importantFaceDetected = currentAnalysis.has_faces &&
+                ['medium', 'high'].includes(currentAnalysis.face_importance);
+            if (importantFaceDetected) {
                 faceEnhanceBtn.checked = true;
-                // Podríamos mostrar un mensaje también
             } else {
                 faceEnhanceBtn.checked = false;
             }

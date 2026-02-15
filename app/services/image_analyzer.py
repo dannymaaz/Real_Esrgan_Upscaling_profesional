@@ -15,7 +15,12 @@ class ImageAnalyzer:
     
     def __init__(self):
         """Inicializa el analizador de imágenes"""
-        pass
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+        self.eye_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_eye.xml'
+        )
     
     def analyze_image(self, image_path: Path) -> Dict:
         """
@@ -47,7 +52,8 @@ class ImageAnalyzer:
         compression_metrics = self._detect_compression_artifacts(gray)
         pixelation_metrics = self._detect_pixelation(gray)
         face_info = self._detect_faces_info(img)
-        has_faces = face_info["has_faces"]
+        # Para decisiones de UX/procesamiento, solo contar rostros relevantes.
+        has_faces = face_info["has_faces"] and face_info["importance"] in {"medium", "high"}
         
         # Determinar escala recomendada
         recommended_scale = self._recommend_scale(
@@ -267,24 +273,57 @@ class ImageAnalyzer:
             Dict con detección de rostro e importancia estimada
         """
         try:
-            # Usar detector de rostros de OpenCV (Haar Cascade)
-            face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            )
+            # Validar cascadas disponibles
+            if self.face_cascade.empty():
+                return {"has_faces": False, "importance": "none"}
+
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            h, w = gray.shape
+
+            min_face = max(48, int(min(h, w) * 0.07))
+            faces = self.face_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.08,
+                minNeighbors=7,
+                minSize=(min_face, min_face)
             )
 
             if len(faces) == 0:
                 return {"has_faces": False, "importance": "none"}
 
-            h, w = gray.shape
+            confirmed_faces = []
+            for x, y, fw, fh in faces:
+                roi_gray = gray[y:y + fh, x:x + fw]
+                if roi_gray.size == 0:
+                    continue
+
+                # Buscar ojos en mitad superior para filtrar falsos positivos (pies/manos/objetos)
+                upper_half = roi_gray[:max(1, int(fh * 0.7)), :]
+                eyes_found = 0
+                if not self.eye_cascade.empty() and upper_half.size > 0:
+                    min_eye = max(8, int(min(fw, fh) * 0.12))
+                    eyes = self.eye_cascade.detectMultiScale(
+                        upper_half,
+                        scaleFactor=1.1,
+                        minNeighbors=6,
+                        minSize=(min_eye, min_eye)
+                    )
+                    eyes_found = len(eyes)
+
+                area_ratio = (fw * fh) / max(1, (h * w))
+                # Aceptar detección solo si parece rostro de verdad.
+                # Permitimos "cara grande" aunque no detecte ojos por iluminación/ángulo.
+                if eyes_found >= 1 or area_ratio >= 0.22:
+                    confirmed_faces.append((x, y, fw, fh))
+
+            if len(confirmed_faces) == 0:
+                return {"has_faces": False, "importance": "none"}
+
             frame_area = h * w
-            largest_face_area = max((fw * fh for _, _, fw, fh in faces), default=0)
+            largest_face_area = max((fw * fh for _, _, fw, fh in confirmed_faces), default=0)
             ratio = largest_face_area / max(1, frame_area)
 
-            if ratio > 0.15 or len(faces) >= 3:
+            if ratio > 0.15 or len(confirmed_faces) >= 3:
                 importance = "high"
             elif ratio > 0.05:
                 importance = "medium"
