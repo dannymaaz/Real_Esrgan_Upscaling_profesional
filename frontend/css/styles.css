@@ -477,3 +477,34 @@ body {
     min-width: 3rem;
     justify-content: center;
 }
+
+/* ========== Estilos de Recomendación ========== */
+.rec-main {
+    font-weight: 600;
+    color: var(--primary-blue-light);
+    margin-bottom: var(--spacing-sm);
+    font-size: 1.05rem;
+}
+
+.rec-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.rec-list li {
+    position: relative;
+    padding-left: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+.rec-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    color: var(--primary-blue);
+    font-weight: bold;
+}
+

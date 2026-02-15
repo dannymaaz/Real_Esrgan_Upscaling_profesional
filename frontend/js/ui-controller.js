@@ -30,13 +30,34 @@ class UIController {
         const recommendation = document.getElementById('recommendation');
         const recommendationText = document.getElementById('recommendationText');
 
-        let extras = "";
-        if (analysis.has_faces) {
-            extras = " Se detectaron rostros, se recomienda activar 'Mejorar Rostros'.";
+        // Limpiar contenido previo
+        recommendationText.innerHTML = '';
+
+        // Título de recomendación principal
+        const mainRec = document.createElement('div');
+        mainRec.className = 'rec-main';
+        mainRec.textContent = `Recomendamos usar escala ${analysis.recommended_scale}x para mejores resultados.`;
+        recommendationText.appendChild(mainRec);
+
+        // Lista de detalles
+        if (Array.isArray(analysis.analysis_notes) && analysis.analysis_notes.length > 0) {
+            const list = document.createElement('ul');
+            list.className = 'rec-list';
+
+            analysis.analysis_notes.forEach(note => {
+                const li = document.createElement('li');
+                li.textContent = note;
+                list.appendChild(li);
+            });
+
+            recommendationText.appendChild(list);
+        } else if (typeof analysis.analysis_notes === 'string') {
+            // Fallback para versiones anteriores
+            const p = document.createElement('p');
+            p.textContent = analysis.analysis_notes;
+            recommendationText.appendChild(p);
         }
 
-        recommendationText.textContent =
-            `Recomendamos usar escala ${analysis.recommended_scale}x para mejores resultados. ${analysis.analysis_notes}${extras}`;
         recommendation.style.display = 'flex';
 
         // Seleccionar automáticamente la escala recomendada
@@ -158,10 +179,12 @@ class UIController {
         // Actualizar información del resultado
         const resultInfo = document.getElementById('resultInfo');
         resultInfo.innerHTML = `
+            <!--
             <div class="info-row">
                 <span class="info-label">Modelo usado:</span>
                 <span class="info-value">${data.model_used}</span>
             </div>
+            -->
             <div class="info-row">
                 <span class="info-label">Escala:</span>
                 <span class="info-value">${data.scale}x</span>

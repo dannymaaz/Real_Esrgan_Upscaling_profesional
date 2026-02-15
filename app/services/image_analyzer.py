@@ -97,9 +97,10 @@ class ImageAnalyzer:
 
     def _detect_blur(self, gray: np.ndarray) -> Dict:
         """Detecta blur usando Laplacian + Tenengrad."""
-        laplacian_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        # Usar float32 para ahorrar memoria (CV_32F) en lugar de CV_64F
+        laplacian_score = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
         gradient_magnitude = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
         tenengrad_score = float(np.mean(gradient_magnitude ** 2))
 
@@ -375,7 +376,7 @@ class ImageAnalyzer:
         blur_metrics: Dict = None,
         compression_metrics: Dict = None,
         pixelation_metrics: Dict = None
-    ) -> str:
+    ) -> list:
         """
         Genera notas descriptivas sobre el análisis
         
@@ -388,50 +389,48 @@ class ImageAnalyzer:
             has_faces: Si se detectaron rostros
             
         Returns:
-            Notas descriptivas
+            Lista de notas descriptivas
         """
         notes = []
         
         # Nota sobre resolución
         total_pixels = width * height
         if total_pixels < 500_000:
-            notes.append("Imagen de baja resolución - ideal para upscaling 4x")
+            notes.append("Imagen de baja resolución")
         elif total_pixels < 2_000_000:
-            notes.append("Imagen de resolución media - 4x recomendado")
+            notes.append("Imagen de resolución media")
         else:
-            notes.append("Imagen de alta resolución - 2x recomendado para evitar archivos muy grandes")
+            notes.append("Imagen de alta resolución")
         
         # Nota sobre tipo
         type_names = {
-            "photo": "fotografía real",
-            "anime": "anime/ilustración estilo anime",
-            "illustration": "ilustración"
+            "photo": "Fotografía real",
+            "anime": "Anime/Ilustración",
+            "illustration": "Ilustración"
         }
-        notes.append(f"Detectada como {type_names.get(image_type, 'imagen')}")
+        notes.append(f"Tipo: {type_names.get(image_type, 'Imagen')}")
         
         # Nota sobre rostros
         if has_faces:
-            notes.append("Rostros detectados - se recomienda activar 'Mejorar Rostros'")
+            notes.append("Rostros detectados")
         
         # Nota sobre calidad
         if sharpness < 50:
-            notes.append("Imagen con poca nitidez - el upscaling mejorará significativamente la calidad")
+            notes.append("Poca nitidez")
         elif sharpness > 200:
-            notes.append("Imagen ya bastante nítida - el upscaling refinará los detalles")
+            notes.append("Buena nitidez")
 
         if blur_metrics and blur_metrics.get("blur_severity") == "strong":
-            notes.append("Blur fuerte detectado (Laplacian + Tenengrad) - se aplicará restauración anti-blur")
-        elif blur_metrics and blur_metrics.get("blur_severity") == "medium":
-            notes.append("Blur moderado detectado - se aplicará restauración suave")
+            notes.append("Blur fuerte detectado")
         
         # Nota sobre ruido
         if noise_level == "high":
-            notes.append("Alto nivel de ruido detectado - Real-ESRGAN ayudará a reducirlo")
+            notes.append("Nivel de ruido alto")
 
         if compression_metrics and compression_metrics.get("has_compression_artifacts"):
-            notes.append("Artefactos de compresión detectados (tipo redes sociales/JPEG)")
+            notes.append("Artefactos de compresión")
 
         if pixelation_metrics and pixelation_metrics.get("is_pixelated"):
-            notes.append("Pixelación detectada por compresión o sensor/zoom digital")
+            notes.append("Pixelación detectada")
 
-        return " | ".join(notes)
+        return notes
