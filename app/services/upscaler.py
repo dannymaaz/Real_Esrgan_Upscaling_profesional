@@ -7,6 +7,7 @@ Autor: Danny Maaz (github.com/dannymaaz)
 import cv2
 import torch
 import numpy as np
+import random
 from pathlib import Path
 from typing import Optional, Dict
 from basicsr.archs.rrdbnet_arch import RRDBNet
@@ -97,7 +98,12 @@ class RealESRGANUpscaler:
         if severe_degradation:
             weight = min(0.22, weight + 0.05)
 
-        return float(np.clip(weight, 0.06, 0.22))
+        # Ajuste por condiciones de luz (en baja luz, GFPGAN tiende a verse muy artificial/pegado)
+        lighting = profile.get("lighting_condition", "normal")
+        if lighting == "low_light":
+            weight *= 0.7  # Reducir peso en 30%
+            
+        return float(np.clip(weight, 0.04, 0.22))
 
     def _merge_face_enhancement(self, base_img: np.ndarray, enhanced_img: np.ndarray) -> np.ndarray:
         """
@@ -436,7 +442,11 @@ class RealESRGANUpscaler:
         ):
             return img
 
-        if denoise_strength == 0:
+        lighting = profile.get("lighting_condition", "normal")
+        if lighting == "low_light":
+            denoise_strength *= 0.6  # Reducir denoise en noche para evitar "plástico"
+            
+        if denoise_strength < 1:
             return img
 
         denoised = cv2.fastNlMeansDenoisingColored(
@@ -460,7 +470,16 @@ class RealESRGANUpscaler:
             keep_original = 0.68
 
         blended = cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
-        return self._reinject_texture(img, blended, profile)
+        
+        # Recuperar textura
+        restored = self._reinject_texture(img, blended, profile)
+        
+        # Paso final anti-plástico: Inyección de micro-grano natural
+        # Solo si se aplicó denoise fuerte o es imagen de alta calidad que quedó muy lisa
+        if denoise_strength > 0 or lighting == "low_light":
+             restored = self._add_micro_grain(restored, profile)
+             
+        return restored
 
     def _reinject_texture(self, original: np.ndarray, processed: np.ndarray, profile: Dict) -> np.ndarray:
         """Recupera microtextura (ropa/cabello) tras denoise para evitar acabado plástico."""
@@ -552,6 +571,29 @@ class RealESRGANUpscaler:
 
         return np.clip(blended, 0, 255).astype(np.uint8)
 
+    def _add_micro_grain(self, img: np.ndarray, profile: Dict) -> np.ndarray:
+        """
+        Añade ruido gaussiano sutil (grano de película) para eliminar el efecto plástico.
+        """
+        h, w, c = img.shape
+        lighting = profile.get("lighting_condition", "normal")
+        
+        # Base de fuerza de grano
+        grain_strength = 2.0
+        
+        if lighting == "low_light":
+            grain_strength = 3.5  # Más grano en noche es natural
+        elif profile.get("source_info", {}).get("is_likely_social_media"):
+            grain_strength = 2.5
+            
+        # Generar ruido
+        noise = np.random.normal(0, grain_strength, (h, w, c)).astype(np.float32)
+        
+        # Añadir a la imagen
+        noisy_img = img.astype(np.float32) + noise
+        
+        return np.clip(noisy_img, 0, 255).astype(np.uint8)
+
     def _build_skin_mask(self, img: np.ndarray) -> np.ndarray:
         """
         Genera máscara aproximada de piel en rango [0, 1] para evitar oversharpen en rostros/manos.
@@ -562,6 +604,11 @@ class RealESRGANUpscaler:
         lower = np.array([0, 133, 77], dtype=np.uint8)
         upper = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower, upper)
+        
+        # Dilatar para cubrir bordes de manos/dedos que suelen sufrir artifacts
+        kernel = np.ones((3,3), np.uint8)
+        mask = cv2.dilate(mask, kernel, iterations=2)
+        
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
         return mask.astype(np.float32) / 255.0
 

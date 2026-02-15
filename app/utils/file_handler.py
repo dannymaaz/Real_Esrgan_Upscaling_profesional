@@ -15,6 +15,7 @@ from app.config import (
     UPLOADS_DIR,
     OUTPUTS_DIR,
     ALLOWED_EXTENSIONS,
+    ALLOWED_MIME_TYPES,
     MAX_UPLOAD_SIZE,
     AUTO_CLEANUP,
     CLEANUP_AFTER_HOURS
@@ -76,11 +77,25 @@ async def save_upload_file(upload_file: UploadFile) -> Tuple[str, Path]:
     Raises:
         HTTPException: Si el archivo no es válido o excede el tamaño máximo
     """
+    supported_formats_text = ", ".join(ext.replace(".", "").upper() for ext in sorted(ALLOWED_EXTENSIONS))
+    unsupported_message = (
+        f"Este archivo no es compatible por ahora. "
+        f"Formatos soportados: {supported_formats_text}."
+    )
+
     # Validar extensión
     if not is_allowed_file(upload_file.filename):
         raise HTTPException(
             status_code=400,
-            detail=f"Formato de archivo no permitido. Use: {', '.join(ALLOWED_EXTENSIONS)}"
+            detail=unsupported_message
+        )
+
+    # Validar MIME cuando está disponible
+    content_type = (upload_file.content_type or "").lower().strip()
+    if content_type and content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=unsupported_message
         )
     
     # Generar nombre único

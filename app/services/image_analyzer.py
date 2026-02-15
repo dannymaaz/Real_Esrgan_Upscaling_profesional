@@ -6,6 +6,7 @@ Autor: Danny Maaz (github.com/dannymaaz)
 
 import cv2
 import numpy as np
+from PIL import Image, ExifTags
 from pathlib import Path
 from typing import Dict
 
@@ -54,6 +55,11 @@ class ImageAnalyzer:
         compression_metrics = self._detect_compression_artifacts(gray)
         pixelation_metrics = self._detect_pixelation(gray)
         face_info = self._detect_faces_info(img)
+        
+        # Análisis profundo de origen y condiciones
+        source_info = self._check_source_integrity(image_path)
+        lighting_condition = self._analyze_lighting(img)
+        
         image_type = self._detect_image_type(
             img=img,
             blur_metrics=blur_metrics,
@@ -98,8 +104,14 @@ class ImageAnalyzer:
             "has_faces": has_faces,
             "face_count": face_info.get("count", 0),
             "face_importance": face_info["importance"],
+            "face_count": face_info.get("count", 0),
+            "face_importance": face_info["importance"],
+            "source_info": source_info,
+            "lighting_condition": lighting_condition,
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
+            "source_info": source_info,
+            "lighting_condition": lighting_condition,
             "uniform_restore_mode": self._should_use_uniform_restore(
                 blur_metrics,
                 noise_level,
@@ -112,7 +124,7 @@ class ImageAnalyzer:
                 compression_metrics,
                 pixelation_metrics
             ),
-            "analysis_notes": self._generate_notes(
+            "analysis_notes": self._generate_detailed_notes(
                 width,
                 height,
                 image_type,
@@ -121,9 +133,65 @@ class ImageAnalyzer:
                 has_faces,
                 blur_metrics,
                 compression_metrics,
-                pixelation_metrics
+                pixelation_metrics,
+                source_info,
+                lighting_condition
             )
         }
+
+    def _check_source_integrity(self, image_path: Path) -> Dict:
+        """
+        Analiza metadatos y patrones para determinar origen
+        """
+        try:
+            with Image.open(image_path) as pil_img:
+                exif = pil_img.getexif()
+                has_exif = bool(exif)
+                
+                # Redes sociales comunes eliminan EXIF y estandarizan anchos
+                w, h = pil_img.size
+                social_widths = {720, 960, 1080, 1280, 1600, 1920, 2048}
+                
+                is_social = False
+                if not has_exif:
+                    if w in social_widths or h in social_widths:
+                        is_social = True
+                
+                return {
+                    "has_exif": has_exif,
+                    "is_likely_social_media": is_social,
+                    "format": pil_img.format
+                }
+        except Exception:
+            return {"has_exif": False, "is_likely_social_media": True, "format": "UNKNOWN"}
+
+    def _analyze_lighting(self, img: np.ndarray) -> str:
+        """Detecta condiciones de iluminación para ajustar denoise"""
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        mean_luma = np.mean(gray)
+        
+        if mean_luma < 65:
+            return "low_light"  # Poca luz/Noche: Ruido natural, no suavizar excesivamente
+        elif mean_luma > 195:
+            return "high_key"   # Muy iluminada/Quemada
+        else:
+            return "normal"
+
+    def _generate_detailed_notes(
+        self, width, height, image_type, sharpness, noise_level, has_faces, 
+        blur, compression, pixelation, source_info, lighting
+    ) -> list:
+        """Genera notas humanas incluyendo origen y luz"""
+        # Llamar al legacy para la base
+        notes = self._generate_notes(width, height, image_type, sharpness, noise_level, has_faces, blur, compression, pixelation)
+        
+        if source_info["is_likely_social_media"]:
+            notes.append("Probable origen de Redes Sociales (Compresión web)")
+            
+        if lighting == "low_light":
+            notes.append("Condiciones de baja luz: Procesamiento conservador de ruido")
+            
+        return notes
 
     def _detect_blur(self, gray: np.ndarray) -> Dict:
         """Detecta blur usando Laplacian + Tenengrad."""

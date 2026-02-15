@@ -92,9 +92,16 @@ async function handleFileSelect(file) {
     if (!file) return;
 
     // Validar tipo de archivo
-    const validTypes = ['image/png', 'image/jpeg', 'image/jpg'];
-    if (!validTypes.includes(file.type)) {
-        UIController.showError('Por favor selecciona una imagen PNG o JPG');
+    const supportedMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    const supportedExtensions = ['.png', '.jpg', '.jpeg', '.webp'];
+    const extension = file.name ? `.${file.name.split('.').pop().toLowerCase()}` : '';
+    const mimeType = (file.type || '').toLowerCase();
+
+    const isSupportedMime = supportedMimeTypes.includes(mimeType);
+    const isSupportedExtension = supportedExtensions.includes(extension);
+
+    if (!isSupportedMime && !isSupportedExtension) {
+        UIController.showError('Este archivo no es compatible por ahora. Formatos soportados: PNG, JPG, JPEG, WEBP.');
         return;
     }
 

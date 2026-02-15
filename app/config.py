@@ -55,8 +55,8 @@ GFPGAN_MODEL_PATH = MODELS_DIR / "GFPGANv1.3.pth"
 
 # Configuración de uploads
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB (reducido para evitar problemas de memoria)
-ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg"}
-ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg"}
+ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 
 # Configuración del servidor
 HOST = "127.0.0.1"
