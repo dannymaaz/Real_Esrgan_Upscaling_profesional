@@ -351,29 +351,21 @@ class RealESRGANUpscaler:
 
     def _apply_adaptive_artifact_reduction(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """Reduce ruido/artefactos de compresión de forma adaptativa."""
-        noise_level = profile.get("noise_level", "low")
+        # NOTA: Se ha eliminado cv2.fastNlMeansDenoisingColored porque suavizaba demasiado
+        # la imagen, eliminando texturas en ropa y fondos, especialmente en screenshots.
+        # Real-ESRGAN ya realiza una restauración y reducción de ruido superior.
+        
         compression_score = float(profile.get("compression_score", 0.0))
         pixelation_score = float(profile.get("pixelation_score", 0.0))
-
-        if noise_level == "high":
-            h = 10
-        elif noise_level == "medium":
-            h = 6
-        else:
-            h = 4
         
-        # fastNlMeansDenoisingColored puede consumir mucha memoria
-        # Convertir explícitamente a uint8 si no lo es, aunque debería venir así
-        if img.dtype != np.uint8:
-            img = np.clip(img, 0, 255).astype(np.uint8)
+        # Solo aplicar filtro bilateral suave si hay mucha compresión/pixelación
+        # Se reduce sigmaColor para evitar efecto "acuarela"
+        if compression_score > 0.4 or pixelation_score > 0.35:
+            # Filtro bilateral muy suave para romper bloques de compresión sin borrar texturas
+            denoised = cv2.bilateralFilter(img, d=5, sigmaColor=25, sigmaSpace=25)
+            return denoised
 
-        denoised = cv2.fastNlMeansDenoisingColored(img, None, h, h, 7, 21)
-
-        if compression_score > 0.2 or pixelation_score > 0.2:
-            sigma_color = 50 + int(min(40, compression_score * 100))
-            denoised = cv2.bilateralFilter(denoised, d=7, sigmaColor=sigma_color, sigmaSpace=35)
-
-        return denoised
+        return img
 
     def _apply_region_aware_sharpen(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """Sharpen por regiones: menos en piel/contornos, más en ropa/fondo."""
