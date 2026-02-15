@@ -316,12 +316,14 @@ class RealESRGANUpscaler:
 
         # Post-proceso adaptativo anti artefactos
         # Desactivar si la imagen es muy grande (>8MP) para evitar OOM
+        postprocess_applied = False
         if processing_profile.get("apply_restoration") and (output.shape[0] * output.shape[1]) < 8_000_000:
             try:
                 output = self._apply_adaptive_artifact_reduction(output, processing_profile)
                 output = self._apply_region_aware_sharpen(output, processing_profile)
-            except MemoryError:
-                print("Advertencia: Saltando post-proceso por falta de memoria")
+                postprocess_applied = True
+            except (MemoryError, cv2.error, ValueError, TypeError) as e:
+                print(f"Advertencia: Saltando post-proceso por error: {str(e)}")
 
         # Guardar resultado
         try:
@@ -346,7 +348,7 @@ class RealESRGANUpscaler:
             },
             "device_used": self.device,
             "face_enhance": face_enhance,
-            "postprocess_applied": bool(processing_profile.get("apply_restoration"))
+            "postprocess_applied": postprocess_applied
         }
 
     def _apply_adaptive_artifact_reduction(self, img: np.ndarray, profile: Dict) -> np.ndarray:
@@ -359,6 +361,7 @@ class RealESRGANUpscaler:
 
     def _apply_region_aware_sharpen(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """Sharpen por regiones: menos en piel/contornos, más en ropa/fondo."""
+        img = self._ensure_bgr_uint8(img)
         blurred = cv2.GaussianBlur(img, (0, 0), 1.2)
         # addWeighted output depth matches src1 detph, usually uint8 here
         unsharp = cv2.addWeighted(img, 1.55, blurred, -0.55, 0)
@@ -401,12 +404,43 @@ class RealESRGANUpscaler:
         Genera máscara aproximada de piel en rango [0, 1] para evitar oversharpen en rostros/manos.
         Usa espacio YCrCb por estabilidad en iluminación.
         """
+        img = self._ensure_bgr_uint8(img)
         ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
         lower = np.array([0, 133, 77], dtype=np.uint8)
         upper = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower, upper)
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
         return mask.astype(np.float32) / 255.0
+
+    def _ensure_bgr_uint8(self, img) -> np.ndarray:
+        """
+        Normaliza imágenes para OpenCV: ndarray contiguo uint8 en formato BGR (3 canales).
+        """
+        if img is None:
+            raise ValueError("Imagen vacia (None) para procesamiento OpenCV")
+
+        if not isinstance(img, np.ndarray):
+            img = np.asarray(img)
+
+        if img.size == 0:
+            raise ValueError("Imagen vacia para procesamiento OpenCV")
+
+        if img.dtype != np.uint8:
+            img = np.clip(img, 0, 255).astype(np.uint8)
+
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif img.ndim == 3:
+            if img.shape[2] == 1:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            elif img.shape[2] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+            elif img.shape[2] != 3:
+                raise ValueError(f"Numero de canales no soportado: {img.shape[2]}")
+        else:
+            raise ValueError(f"Dimensiones de imagen no soportadas: {img.ndim}")
+
+        return np.ascontiguousarray(img)
     
     def get_available_models(self) -> Dict:
         """
