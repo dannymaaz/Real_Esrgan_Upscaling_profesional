@@ -520,11 +520,17 @@ class ImageAnalyzer:
         pixelation_metrics: Dict
     ) -> bool:
         """Decide si conviene aplicar pre/post-proceso anti artefactos."""
+        blur_severity = blur_metrics.get("blur_severity", "low")
+        compression_score = float(compression_metrics.get("compression_score", 0.0))
+        pixelation_score = float(pixelation_metrics.get("pixelation_score", 0.0))
+
         return any([
-            blur_metrics["blur_severity"] in {"medium", "strong"},
-            noise_level in {"medium", "high"},
-            compression_metrics["has_compression_artifacts"],
-            pixelation_metrics["is_pixelated"]
+            blur_severity == "strong",
+            noise_level == "high",
+            compression_score > 0.55,
+            pixelation_score > 0.3,
+            (blur_severity == "medium" and compression_score > 0.48),
+            (blur_severity == "medium" and pixelation_score > 0.28)
         ])
 
     def _should_use_uniform_restore(

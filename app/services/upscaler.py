@@ -74,6 +74,52 @@ class RealESRGANUpscaler:
             self.face_enhancer.upscale = scale
             
         return self.face_enhancer
+
+    def _compute_face_weight(self, face_fidelity: str, profile: Optional[Dict] = None) -> float:
+        """Calcula peso de GFPGAN priorizando naturalidad e identidad."""
+        profile = profile or {}
+        blur_severity = profile.get("blur_severity", "low")
+        pixelation_score = float(profile.get("pixelation_score", 0.0))
+        compression_score = float(profile.get("compression_score", 0.0))
+
+        # Base conservadora para evitar "cara nueva".
+        if face_fidelity == "ultra":
+            weight = 0.08
+        elif face_fidelity == "high":
+            weight = 0.1
+        else:
+            weight = 0.13
+
+        severe_degradation = (
+            blur_severity == "strong"
+            and (pixelation_score > 0.3 or compression_score > 0.5)
+        )
+        if severe_degradation:
+            weight = min(0.22, weight + 0.05)
+
+        return float(np.clip(weight, 0.06, 0.22))
+
+    def _merge_face_enhancement(self, base_img: np.ndarray, enhanced_img: np.ndarray) -> np.ndarray:
+        """
+        Mezcla conservadora solo donde GFPGAN cambió realmente la imagen (normalmente rostro).
+        Evita afectar ropa/fondo y reduce look plástico global.
+        """
+        base_img = self._ensure_bgr_uint8(base_img)
+        enhanced_img = self._ensure_bgr_uint8(enhanced_img)
+
+        if base_img.shape != enhanced_img.shape:
+            return enhanced_img
+
+        diff = cv2.absdiff(base_img, enhanced_img)
+        diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+        _, changed = cv2.threshold(diff_gray, 5, 255, cv2.THRESH_BINARY)
+        changed = cv2.dilate(changed, np.ones((5, 5), np.uint8), iterations=1)
+        changed = cv2.GaussianBlur(changed, (0, 0), 2.0)
+        alpha = (changed.astype(np.float32) / 255.0) * 0.45
+        alpha_3c = np.repeat(alpha[:, :, None], 3, axis=2)
+
+        merged = base_img.astype(np.float32) * (1.0 - alpha_3c) + enhanced_img.astype(np.float32) * alpha_3c
+        return np.clip(merged, 0, 255).astype(np.uint8)
         
     def _detect_device(self) -> str:
         """
@@ -281,24 +327,25 @@ class RealESRGANUpscaler:
         # Procesar upscaling
         try:
             if face_enhance and HAS_GFPGAN and GFPGAN_MODEL_PATH.exists():
-                # Cargar GFPGAN con el upsampler actual como background upsampler
+                # 1) Upscaling base con Real-ESRGAN.
+                output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
+
+                # 2) Mejora facial localizada sobre la imagen ya escalada.
                 face_enhancer = self._load_face_enhancer(
-                    scale=MODELS[model_key]["scale"],
-                    bg_upsampler=upsampler
+                    scale=1,
+                    bg_upsampler=None
                 )
-                
                 if face_enhancer is not None:
-                    # weight: controla el balance entre fidelidad (preservar original) y mejora
-                    _, _, output = face_enhancer.enhance(
-                        img, 
-                        has_aligned=False, 
-                        only_center_face=False, 
+                    face_weight = self._compute_face_weight(face_fidelity, processing_profile)
+                    _, _, face_output = face_enhancer.enhance(
+                        output,
+                        has_aligned=False,
+                        only_center_face=False,
                         paste_back=True,
-                        weight=0.25 if face_fidelity == "high" else 0.5
+                        weight=face_weight
                     )
-                else:
-                    # Fallback si falla la carga de GFPGAN
-                    output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
+                    if face_output is not None:
+                        output = self._merge_face_enhancement(output, face_output)
             else:
                 # Procesamiento estándar sin GFPGAN
                 output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
@@ -368,17 +415,26 @@ class RealESRGANUpscaler:
 
         denoise_strength = 0
         if noise_level == "high":
-            denoise_strength = 7
+            denoise_strength = 5
         elif noise_level == "medium":
-            denoise_strength = 4
+            denoise_strength = 3
 
         if compression_score > 0.8:
-            denoise_strength = max(denoise_strength, 6)
+            denoise_strength = max(denoise_strength, 5)
         elif compression_score > 0.45:
-            denoise_strength = max(denoise_strength, 4)
+            denoise_strength = max(denoise_strength, 3)
 
         if uniform_restore_mode:
-            denoise_strength = max(denoise_strength, 6)
+            denoise_strength = max(denoise_strength, 5)
+
+        # En fotos no severas, evitar suavizado global para preservar textura natural.
+        if (
+            not uniform_restore_mode
+            and blur_severity != "strong"
+            and compression_score < 0.6
+            and float(profile.get("pixelation_score", 0.0)) < 0.35
+        ):
+            return img
 
         if denoise_strength == 0:
             return img
@@ -393,17 +449,50 @@ class RealESRGANUpscaler:
 
         # Mantener textura natural en piel al mezclar con la imagen original.
         if uniform_restore_mode and blur_severity == "strong":
-            keep_original = 0.22
+            keep_original = 0.4
         elif uniform_restore_mode:
-            keep_original = 0.3
+            keep_original = 0.48
         elif blur_severity == "strong":
-            keep_original = 0.28
+            keep_original = 0.5
         elif blur_severity == "medium":
-            keep_original = 0.35
+            keep_original = 0.58
         else:
-            keep_original = 0.45
+            keep_original = 0.68
 
-        return cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
+        blended = cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
+        return self._reinject_texture(img, blended, profile)
+
+    def _reinject_texture(self, original: np.ndarray, processed: np.ndarray, profile: Dict) -> np.ndarray:
+        """Recupera microtextura (ropa/cabello) tras denoise para evitar acabado plástico."""
+        original = self._ensure_bgr_uint8(original)
+        processed = self._ensure_bgr_uint8(processed)
+
+        gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+        grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        grad_mag = cv2.magnitude(grad_x, grad_y)
+        grad_norm = cv2.normalize(grad_mag, None, 0.0, 1.0, cv2.NORM_MINMAX)
+
+        skin_mask = self._build_skin_mask(original)
+        texture_mask = np.clip((grad_norm - 0.12) * 1.6, 0.0, 1.0)
+        texture_mask *= (1.0 - np.clip(skin_mask, 0.0, 1.0))
+        texture_mask = cv2.GaussianBlur(texture_mask, (0, 0), 1.2)
+
+        blur_severity = profile.get("blur_severity", "low")
+        uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
+        if uniform_restore_mode:
+            texture_strength = 0.08
+        elif blur_severity == "strong":
+            texture_strength = 0.06
+        elif blur_severity == "medium":
+            texture_strength = 0.12
+        else:
+            texture_strength = 0.16
+
+        high_pass = original.astype(np.float32) - cv2.GaussianBlur(original.astype(np.float32), (0, 0), 1.05)
+        texture_gain = high_pass * (texture_strength * texture_mask[:, :, None])
+        restored = processed.astype(np.float32) + texture_gain
+        return np.clip(restored, 0, 255).astype(np.uint8)
 
     def _apply_region_aware_sharpen(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """Sharpen por regiones: menos en piel/contornos, más en ropa/fondo."""

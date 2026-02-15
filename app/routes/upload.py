@@ -228,6 +228,16 @@ async def upscale_image(
             "blur_severity": analysis.get("blur_severity", "low")
         }
 
+        # Evitar modificación excesiva del rostro en fotos de buena calidad.
+        severe_face_degradation = (
+            analysis.get("blur_severity") == "strong"
+            and (
+                analysis.get("pixelation_score", 0.0) > 0.32
+                or analysis.get("compression_score", 0.0) > 0.52
+            )
+        )
+        face_fidelity_mode = "balanced" if severe_face_degradation else "ultra"
+
         # Procesar upscaling
         started_at = perf_counter()
         result = upscaler.upscale_image(
@@ -237,7 +247,7 @@ async def upscale_image(
             face_enhance=effective_face_enhance,
             resize_factor=resize_factor,
             processing_profile=processing_profile,
-            face_fidelity="high" if auto_face_enhance else "balanced"
+            face_fidelity=face_fidelity_mode
         )
         elapsed_seconds = perf_counter() - started_at
         
