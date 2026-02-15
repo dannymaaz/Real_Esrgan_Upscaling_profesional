@@ -7,8 +7,7 @@ Autor: Danny Maaz (github.com/dannymaaz)
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Dict, Tuple, Optional
-from PIL import Image
+from typing import Dict
 
 
 class ImageAnalyzer:
@@ -37,11 +36,18 @@ class ImageAnalyzer:
         height, width = img.shape[:2]
         total_pixels = height * width
         
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
         # Análisis de características
         image_type = self._detect_image_type(img)
-        sharpness = self._calculate_sharpness(img)
+        blur_metrics = self._detect_blur(gray)
+        sharpness = blur_metrics["laplacian_score"]
+        tenengrad = blur_metrics["tenengrad_score"]
         noise_level = self._estimate_noise(img)
-        has_faces = self._detect_faces(img)
+        compression_metrics = self._detect_compression_artifacts(gray)
+        pixelation_metrics = self._detect_pixelation(gray)
+        face_info = self._detect_faces_info(img)
+        has_faces = face_info["has_faces"]
         
         # Determinar escala recomendada
         recommended_scale = self._recommend_scale(
@@ -58,13 +64,57 @@ class ImageAnalyzer:
             "megapixels": round(total_pixels / 1_000_000, 2),
             "image_type": image_type,
             "sharpness_score": round(sharpness, 2),
+            "tenengrad_score": round(tenengrad, 2),
+            "is_blurry": blur_metrics["is_blurry"],
+            "blur_severity": blur_metrics["blur_severity"],
             "noise_level": noise_level,
+            "has_compression_artifacts": compression_metrics["has_compression_artifacts"],
+            "compression_score": round(compression_metrics["compression_score"], 3),
+            "is_pixelated": pixelation_metrics["is_pixelated"],
+            "pixelation_score": round(pixelation_metrics["pixelation_score"], 3),
             "has_faces": has_faces,
+            "face_importance": face_info["importance"],
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
+            "apply_restoration": self._should_apply_restoration(
+                blur_metrics,
+                noise_level,
+                compression_metrics,
+                pixelation_metrics
+            ),
             "analysis_notes": self._generate_notes(
-                width, height, image_type, sharpness, noise_level, has_faces
+                width,
+                height,
+                image_type,
+                sharpness,
+                noise_level,
+                has_faces,
+                blur_metrics,
+                compression_metrics,
+                pixelation_metrics
             )
+        }
+
+    def _detect_blur(self, gray: np.ndarray) -> Dict:
+        """Detecta blur usando Laplacian + Tenengrad."""
+        laplacian_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
+        tenengrad_score = float(np.mean(gradient_magnitude ** 2))
+
+        if laplacian_score < 35 or tenengrad_score < 500:
+            severity = "strong"
+        elif laplacian_score < 80 or tenengrad_score < 1200:
+            severity = "medium"
+        else:
+            severity = "low"
+
+        return {
+            "laplacian_score": laplacian_score,
+            "tenengrad_score": tenengrad_score,
+            "is_blurry": severity in {"strong", "medium"},
+            "blur_severity": severity
         }
     
     def _detect_image_type(self, img: np.ndarray) -> str:
@@ -113,9 +163,60 @@ class ImageAnalyzer:
             Score de nitidez (mayor = más nítida)
         """
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
-        sharpness = laplacian.var()
-        return sharpness
+        return self._detect_blur(gray)["laplacian_score"]
+
+    def _detect_compression_artifacts(self, gray: np.ndarray) -> Dict:
+        """Detecta artefactos tipo JPEG/redes sociales usando blockiness 8x8."""
+        gray_float = gray.astype(np.float32)
+        h, w = gray.shape
+
+        vertical_boundaries = [x for x in range(8, w, 8)]
+        horizontal_boundaries = [y for y in range(8, h, 8)]
+
+        boundary_diffs = []
+        interior_diffs = []
+
+        for x in vertical_boundaries:
+            boundary_diffs.append(np.mean(np.abs(gray_float[:, x] - gray_float[:, x - 1])))
+            if x + 1 < w:
+                interior_diffs.append(np.mean(np.abs(gray_float[:, x + 1] - gray_float[:, x])))
+
+        for y in horizontal_boundaries:
+            boundary_diffs.append(np.mean(np.abs(gray_float[y, :] - gray_float[y - 1, :])))
+            if y + 1 < h:
+                interior_diffs.append(np.mean(np.abs(gray_float[y + 1, :] - gray_float[y, :])))
+
+        if not boundary_diffs:
+            return {"has_compression_artifacts": False, "compression_score": 0.0}
+
+        b_avg = float(np.mean(boundary_diffs))
+        i_avg = float(np.mean(interior_diffs)) if interior_diffs else 1.0
+        compression_score = max(0.0, (b_avg - i_avg) / (i_avg + 1e-6))
+
+        return {
+            "has_compression_artifacts": compression_score > 0.25,
+            "compression_score": compression_score
+        }
+
+    def _detect_pixelation(self, gray: np.ndarray) -> Dict:
+        """Detecta pixelación por baja resolución/compresión agresiva."""
+        small = cv2.resize(gray, (128, 128), interpolation=cv2.INTER_AREA)
+        quantized = (small // 16).astype(np.uint8)
+        unique_bins_ratio = len(np.unique(quantized)) / 256.0
+
+        edges = cv2.Canny(gray, 80, 180)
+        straight_kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
+        straight_kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 9))
+        straight_edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, straight_kernel_h) + \
+            cv2.morphologyEx(edges, cv2.MORPH_OPEN, straight_kernel_v)
+        stair_ratio = float(np.count_nonzero(straight_edges)) / max(1, np.count_nonzero(edges))
+
+        pixelation_score = max(0.0, (0.5 - unique_bins_ratio)) + max(0.0, stair_ratio - 0.45)
+
+        return {
+            "is_pixelated": pixelation_score > 0.22,
+            "pixelation_score": float(pixelation_score)
+        }
     
     def _estimate_noise(self, img: np.ndarray) -> str:
         """
@@ -151,15 +252,15 @@ class ImageAnalyzer:
         else:
             return "high"
     
-    def _detect_faces(self, img: np.ndarray) -> bool:
+    def _detect_faces_info(self, img: np.ndarray) -> Dict:
         """
-        Detecta si hay rostros en la imagen
+        Detecta si hay rostros y estima su relevancia visual.
         
         Args:
             img: Imagen en formato numpy array
             
         Returns:
-            True si se detectan rostros, False en caso contrario
+            Dict con detección de rostro e importancia estimada
         """
         try:
             # Usar detector de rostros de OpenCV (Haar Cascade)
@@ -170,10 +271,45 @@ class ImageAnalyzer:
             faces = face_cascade.detectMultiScale(
                 gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
             )
-            return len(faces) > 0
+
+            if len(faces) == 0:
+                return {"has_faces": False, "importance": "none"}
+
+            h, w = gray.shape
+            frame_area = h * w
+            largest_face_area = max((fw * fh for _, _, fw, fh in faces), default=0)
+            ratio = largest_face_area / max(1, frame_area)
+
+            if ratio > 0.15 or len(faces) >= 3:
+                importance = "high"
+            elif ratio > 0.05:
+                importance = "medium"
+            else:
+                importance = "low"
+
+            return {"has_faces": True, "importance": importance}
         except Exception:
             # Si falla la detección, asumir que no hay rostros
-            return False
+            return {"has_faces": False, "importance": "none"}
+
+    def _detect_faces(self, img: np.ndarray) -> bool:
+        """Compatibilidad: devuelve True/False para detección de rostros."""
+        return self._detect_faces_info(img)["has_faces"]
+
+    def _should_apply_restoration(
+        self,
+        blur_metrics: Dict,
+        noise_level: str,
+        compression_metrics: Dict,
+        pixelation_metrics: Dict
+    ) -> bool:
+        """Decide si conviene aplicar pre/post-proceso anti artefactos."""
+        return any([
+            blur_metrics["blur_severity"] in {"medium", "strong"},
+            noise_level in {"medium", "high"},
+            compression_metrics["has_compression_artifacts"],
+            pixelation_metrics["is_pixelated"]
+        ])
     
     def _recommend_scale(
         self, width: int, height: int, image_type: str, sharpness: float
@@ -226,8 +362,16 @@ class ImageAnalyzer:
             return "4x"
     
     def _generate_notes(
-        self, width: int, height: int, image_type: str, 
-        sharpness: float, noise_level: str, has_faces: bool = False
+        self,
+        width: int,
+        height: int,
+        image_type: str,
+        sharpness: float,
+        noise_level: str,
+        has_faces: bool = False,
+        blur_metrics: Dict = None,
+        compression_metrics: Dict = None,
+        pixelation_metrics: Dict = None
     ) -> str:
         """
         Genera notas descriptivas sobre el análisis
@@ -271,9 +415,20 @@ class ImageAnalyzer:
             notes.append("Imagen con poca nitidez - el upscaling mejorará significativamente la calidad")
         elif sharpness > 200:
             notes.append("Imagen ya bastante nítida - el upscaling refinará los detalles")
+
+        if blur_metrics and blur_metrics.get("blur_severity") == "strong":
+            notes.append("Blur fuerte detectado (Laplacian + Tenengrad) - se aplicará restauración anti-blur")
+        elif blur_metrics and blur_metrics.get("blur_severity") == "medium":
+            notes.append("Blur moderado detectado - se aplicará restauración suave")
         
         # Nota sobre ruido
         if noise_level == "high":
             notes.append("Alto nivel de ruido detectado - Real-ESRGAN ayudará a reducirlo")
-        
+
+        if compression_metrics and compression_metrics.get("has_compression_artifacts"):
+            notes.append("Artefactos de compresión detectados (tipo redes sociales/JPEG)")
+
+        if pixelation_metrics and pixelation_metrics.get("is_pixelated"):
+            notes.append("Pixelación detectada por compresión o sensor/zoom digital")
+
         return " | ".join(notes)

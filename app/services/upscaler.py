@@ -185,7 +185,9 @@ class RealESRGANUpscaler:
         output_path: Path, 
         model_key: str = "4x",
         face_enhance: bool = False,
-        resize_factor: float = 1.0
+        resize_factor: float = 1.0,
+        processing_profile: Optional[Dict] = None,
+        face_fidelity: str = "balanced"
     ) -> Dict:
         """
         Escala una imagen usando Real-ESRGAN
@@ -196,6 +198,8 @@ class RealESRGANUpscaler:
             model_key: Modelo a usar ('2x', '4x', '4x_anime')
             face_enhance: Si se debe mejorar rostros (requiere GFPGAN)
             resize_factor: Factor para redimensionar la salida (ej: 0.5 para reducir a la mitad)
+            processing_profile: Perfil de calidad detectado en análisis previo
+            face_fidelity: 'high' para preservar rasgos, 'balanced' para más detalle
             
         Returns:
             Diccionario con información del procesamiento
@@ -266,6 +270,9 @@ class RealESRGANUpscaler:
                 f"Por favor, usa una imagen más pequeña o una escala menor."
             )
         
+        if processing_profile is None:
+            processing_profile = {}
+
         # Procesar upscaling
         try:
             if face_enhance and HAS_GFPGAN and GFPGAN_MODEL_PATH.exists():
@@ -287,7 +294,7 @@ class RealESRGANUpscaler:
                         has_aligned=False, 
                         only_center_face=False, 
                         paste_back=True,
-                        weight=0.5  # Balance entre preservar rasgos originales y mejorar calidad
+                        weight=0.25 if face_fidelity == "high" else 0.5
                     )
                 else:
                     # Fallback si falla la carga de GFPGAN
@@ -304,6 +311,11 @@ class RealESRGANUpscaler:
             new_width = int(output.shape[1] * resize_factor)
             new_height = int(output.shape[0] * resize_factor)
             output = cv2.resize(output, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
+
+        # Post-proceso adaptativo anti artefactos (sin segmentación ML pesada)
+        if processing_profile.get("apply_restoration"):
+            output = self._apply_adaptive_artifact_reduction(output, processing_profile)
+            output = self._apply_region_aware_sharpen(output, processing_profile)
 
         # Guardar resultado
         cv2.imwrite(str(output_path), output)
@@ -324,8 +336,79 @@ class RealESRGANUpscaler:
                 "height": final_height
             },
             "device_used": self.device,
-            "face_enhance": face_enhance
+            "face_enhance": face_enhance,
+            "postprocess_applied": bool(processing_profile.get("apply_restoration"))
         }
+
+    def _apply_adaptive_artifact_reduction(self, img: np.ndarray, profile: Dict) -> np.ndarray:
+        """Reduce ruido/artefactos de compresión de forma adaptativa."""
+        noise_level = profile.get("noise_level", "low")
+        compression_score = float(profile.get("compression_score", 0.0))
+        pixelation_score = float(profile.get("pixelation_score", 0.0))
+
+        if noise_level == "high":
+            h = 10
+        elif noise_level == "medium":
+            h = 6
+        else:
+            h = 4
+
+        denoised = cv2.fastNlMeansDenoisingColored(img, None, h, h, 7, 21)
+
+        if compression_score > 0.2 or pixelation_score > 0.2:
+            sigma_color = 50 + int(min(40, compression_score * 100))
+            denoised = cv2.bilateralFilter(denoised, d=7, sigmaColor=sigma_color, sigmaSpace=35)
+
+        return denoised
+
+    def _build_skin_mask(self, img: np.ndarray) -> np.ndarray:
+        """Máscara aproximada de piel por HSV + YCrCb con limpieza morfológica."""
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+
+        skin_hsv = cv2.inRange(hsv, (0, 20, 40), (25, 200, 255))
+        skin_hsv_alt = cv2.inRange(hsv, (160, 20, 40), (179, 200, 255))
+        skin_ycrcb = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
+
+        skin_mask = cv2.bitwise_or(cv2.bitwise_or(skin_hsv, skin_hsv_alt), skin_ycrcb)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+        skin_mask = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel)
+        skin_mask = cv2.GaussianBlur(skin_mask, (7, 7), 0)
+
+        return (skin_mask.astype(np.float32) / 255.0)
+
+    def _apply_region_aware_sharpen(self, img: np.ndarray, profile: Dict) -> np.ndarray:
+        """Sharpen por regiones: menos en piel/contornos, más en ropa/fondo."""
+        blurred = cv2.GaussianBlur(img, (0, 0), 1.2)
+        unsharp = cv2.addWeighted(img, 1.55, blurred, -0.55, 0)
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        edge_map = cv2.Canny(gray, 80, 180)
+        edge_map = cv2.dilate(edge_map, np.ones((3, 3), np.uint8), iterations=1)
+        edge_mask = (edge_map.astype(np.float32) / 255.0)
+
+        skin_mask = self._build_skin_mask(img)
+
+        blur_severity = profile.get("blur_severity", "low")
+        if blur_severity == "strong":
+            base_amount = 0.65
+        elif blur_severity == "medium":
+            base_amount = 0.5
+        else:
+            base_amount = 0.35
+
+        sharpen_strength = np.full(gray.shape, base_amount, dtype=np.float32)
+
+        # Menos sharpen en piel (pies/manos/cara)
+        sharpen_strength = np.where(skin_mask > 0.2, 0.16, sharpen_strength)
+        # En contornos fuertes limitar para evitar halos/artefactos
+        sharpen_strength = np.where(edge_mask > 0.2, np.minimum(sharpen_strength, 0.28), sharpen_strength)
+
+        sharpen_strength_3c = np.repeat(sharpen_strength[:, :, None], 3, axis=2)
+        blended = img.astype(np.float32) * (1.0 - sharpen_strength_3c) + unsharp.astype(np.float32) * sharpen_strength_3c
+
+        return np.clip(blended, 0, 255).astype(np.uint8)
     
     def get_available_models(self) -> Dict:
         """

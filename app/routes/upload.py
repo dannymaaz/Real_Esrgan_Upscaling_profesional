@@ -87,7 +87,6 @@ async def upscale_image(
         analysis = analyzer.analyze_image(input_path)
         original_width = analysis.get("width", 0)
         original_height = analysis.get("height", 0)
-        formatted_size = analysis.get("file_size_mb", 0)
         
         # Determinar modelo a usar
         # Para MEJORAR CALIDAD: Por defecto usamos el modelo x4 (RealESRGAN_x4plus) incluso para 2x
@@ -95,8 +94,6 @@ async def upscale_image(
         # Límite seguro aprox: 8000px de altura final intermedia.
         
         LIMIT_DIMENSION = 8000
-        use_4x_fallback = False # Si debemos usar 4x
-        
         # Verificar si 4x excedería los límites
         if (original_width * 4 > LIMIT_DIMENSION or original_height * 4 > LIMIT_DIMENSION) and scale == "2x":
             use_2x_native = True # Forzar uso nativo de 2x para evitar error de "too large"
@@ -142,20 +139,44 @@ async def upscale_image(
         if resize_factor != 1.0:
             suffix += f"_resized_{scale}"
             
+        # Activación opcional de GFPGAN para rostros importantes con blur fuerte
+        auto_face_enhance = (
+            not face_enhance
+            and analysis.get("has_faces", False)
+            and analysis.get("face_importance") in {"medium", "high"}
+            and analysis.get("blur_severity") == "strong"
+        )
+        effective_face_enhance = face_enhance or auto_face_enhance
+
+        if auto_face_enhance and "_face_enhanced" not in suffix:
+            suffix += "_face_auto"
+
+
         output_filename = get_output_filename(
             input_filename,
             MODELS[model_key]["scale"] if resize_factor == 1.0 else int(MODELS[model_key]["scale"] * resize_factor),
             MODELS[model_key]["name"] + suffix
         )
         output_path = OUTPUTS_DIR / output_filename
-        
+
+        # Perfil de restauración para anti artefactos y sharpen por región
+        processing_profile = {
+            "apply_restoration": analysis.get("apply_restoration", False),
+            "noise_level": analysis.get("noise_level", "low"),
+            "compression_score": analysis.get("compression_score", 0.0),
+            "pixelation_score": analysis.get("pixelation_score", 0.0),
+            "blur_severity": analysis.get("blur_severity", "low")
+        }
+
         # Procesar upscaling
         result = upscaler.upscale_image(
             input_path=input_path,
             output_path=output_path,
             model_key=model_key,
-            face_enhance=face_enhance,
-            resize_factor=resize_factor
+            face_enhance=effective_face_enhance,
+            resize_factor=resize_factor,
+            processing_profile=processing_profile,
+            face_fidelity="high" if auto_face_enhance else "balanced"
         )
         
         # Agregar información adicional
