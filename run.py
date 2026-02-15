@@ -20,7 +20,7 @@ def check_dependencies():
         return True
     except ImportError as e:
         print("=" * 60)
-        print("⚠️  DEPENDENCIAS FALTANTES")
+        print("[!] DEPENDENCIAS FALTANTES")
         print("=" * 60)
         print(f"\nError: {e}")
         print("\nPor favor instala las dependencias:")
@@ -39,7 +39,7 @@ def check_models():
     
     if missing_models:
         print("=" * 60)
-        print("⚠️  MODELOS FALTANTES")
+        print("[!] RESTANTES MODELOS")
         print("=" * 60)
         print("\nLos siguientes modelos no están descargados:")
         for model in missing_models:
@@ -54,28 +54,28 @@ def check_models():
 def main():
     """Ejecuta la aplicación"""
     print("=" * 60)
-    print("🚀 Real-ESRGAN Upscaling Profesional")
+    print("Real-ESRGAN Upscaling Profesional")
     print("    Creado por Danny Maaz")
     print("=" * 60)
     
     # Verificar dependencias
-    print("\n📦 Verificando dependencias...")
+    print("\nVerificando dependencias...")
     if not check_dependencies():
         sys.exit(1)
-    print("   ✓ Dependencias instaladas")
+    print("   [OK] Dependencias instaladas")
     
     # Verificar modelos
-    print("\n🔍 Verificando modelos...")
+    print("\nVerificando modelos...")
     if not check_models():
         sys.exit(1)
-    print("   ✓ Modelos disponibles")
+    print("   [OK] Modelos disponibles")
     
     # Importar configuración
     from app.config import HOST, PORT
     
     # Iniciar servidor
     print("\n" + "=" * 60)
-    print("🌐 Iniciando servidor...")
+    print("Iniciando servidor...")
     print(f"   URL: http://{HOST}:{PORT}")
     print("=" * 60)
     print("\nPresiona Ctrl+C para detener el servidor\n")
@@ -100,7 +100,7 @@ def main():
         )
     except KeyboardInterrupt:
         print("\n\n" + "=" * 60)
-        print("👋 Servidor detenido")
+        print("Servidor detenido")
         print("=" * 60)
 
 if __name__ == "__main__":
