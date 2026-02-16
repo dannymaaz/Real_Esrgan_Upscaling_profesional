@@ -66,7 +66,11 @@ A diferencia de otros upscalers genéricos, este proyecto implementa una capa de
 ## ☕ Apoya el Proyecto
 Si este proyecto te ha sido útil, considera apoyarme para seguir desarrollando herramientas de IA de alta calidad:
 
-[<img src="https://img.shields.io/badge/Donar_vía_Paypal-00457C?style=for-the-badge&logo=paypal&logoColor=white" alt="PayPal Me">](https://paypal.me/Creativegt)
+<div align="center">
+  <a href="https://paypal.me/Creativegt" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Donar_vía_Paypal-00457C?style=for-the-badge&logo=paypal&logoColor=white" alt="PayPal Me">
+  </a>
+</div>
 
 ---
 
@@ -75,10 +79,10 @@ Si este proyecto te ha sido útil, considera apoyarme para seguir desarrollando 
 <p align="left">
   <strong>Creado Por: Danny Maaz</strong>
   <br>
-  <a href="https://github.com/dannymaaz">
+  <a href="https://github.com/dannymaaz" target="_blank" rel="noopener noreferrer">
     <img src="https://img.shields.io/badge/GitHub-dannymaaz-black?style=flat&logo=github" alt="GitHub">
   </a>
-  <a href="https://www.linkedin.com/in/danny-maaz-a566251b5/">
+  <a href="https://www.linkedin.com/in/danny-maaz-a566251b5/" target="_blank" rel="noopener noreferrer">
     <img src="https://img.shields.io/badge/LinkedIn-Danny_Maaz-blue?style=flat&logo=linkedin" alt="LinkedIn">
   </a>
 </p>
