@@ -244,6 +244,10 @@ class UIController {
 
         const newImageBtn = document.getElementById('newImageBtn');
         newImageBtn.onclick = () => {
+            if (window.AppController && typeof window.AppController.onNewImageRequested === 'function') {
+                window.AppController.onNewImageRequested();
+                return;
+            }
             location.reload();
         };
     }

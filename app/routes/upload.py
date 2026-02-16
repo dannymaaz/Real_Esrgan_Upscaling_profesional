@@ -8,6 +8,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from typing import Optional
 from time import perf_counter
+from threading import Lock
+from starlette.concurrency import run_in_threadpool
 
 from app.config import UPLOADS_DIR, OUTPUTS_DIR, MODELS
 from app.utils.file_handler import (
@@ -26,6 +28,21 @@ router = APIRouter(prefix="/api", tags=["upload"])
 # Instancias de servicios (singleton)
 analyzer = ImageAnalyzer()
 upscaler = RealESRGANUpscaler()
+upscale_lock = Lock()
+
+
+def _run_upscale_locked(*, input_path: Path, output_path: Path, model_key: str, face_enhance: bool, resize_factor: float, processing_profile: dict, face_fidelity: str):
+    """Ejecuta upscaling bajo lock para evitar sobrecarga concurrente en CPU/GPU."""
+    with upscale_lock:
+        return upscaler.upscale_image(
+            input_path=input_path,
+            output_path=output_path,
+            model_key=model_key,
+            face_enhance=face_enhance,
+            resize_factor=resize_factor,
+            processing_profile=processing_profile,
+            face_fidelity=face_fidelity
+        )
 
 def _normalize_model_key(model: Optional[str]) -> Optional[str]:
     """Acepta clave interna (2x/4x/4x_anime) o nombre del modelo RealESRGAN."""
@@ -68,8 +85,8 @@ async def analyze_image(file: UploadFile = File(...)):
         # Guardar archivo temporalmente
         filename, file_path = await save_upload_file(file)
         
-        # Analizar imagen
-        analysis = analyzer.analyze_image(file_path)
+        # Analizar imagen en threadpool para no bloquear event loop
+        analysis = await run_in_threadpool(analyzer.analyze_image, file_path)
         
         # Agregar información del archivo
         analysis["filename"] = filename
@@ -111,7 +128,7 @@ async def upscale_image(
         input_filename, input_path = await save_upload_file(file)
         
         # Analizar imagen para obtener dimensiones y tipo
-        analysis = analyzer.analyze_image(input_path)
+        analysis = await run_in_threadpool(analyzer.analyze_image, input_path)
         original_width = analysis.get("width", 0)
         original_height = analysis.get("height", 0)
         analyzed_image_type = analysis.get("image_type", "photo")
@@ -125,89 +142,34 @@ async def upscale_image(
 
         effective_image_type = normalized_forced_type or analyzed_image_type
         
-        # Determinar modelo a usar
-        # Para MEJORAR CALIDAD: Por defecto usamos el modelo x4 (RealESRGAN_x4plus) incluso para 2x
-        # y luego redimensionamos. PERO si la imagen es muy grande, esto podría exceder el límite de memoria/dimensión.
-        # Límite seguro aprox: 8000px de altura final intermedia.
+        if scale not in {"2x", "4x"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Escala no válida: {scale}. Use '2x' o '4x'"
+            )
 
-        LIMIT_DIMENSION = 8000
-        cpu_safe_mode = upscaler.device == "cpu"
-        cpu_fallback_note = None
+        requested_scale_value = 2 if scale == "2x" else 4
+        model_key_from_request = _normalize_model_key(model)
+        auto_model_key = "4x_anime" if effective_image_type == "anime" else "4x"
+        model_key = model_key_from_request or auto_model_key
 
-        # En algunas instalaciones CPU, el modelo 4x puede cerrar el proceso nativo sin excepción.
-        # Modo seguro: forzar modelo 2x y reescalar cuando se solicita 4x.
-        if cpu_safe_mode:
-            if scale == "2x":
-                model_key = "2x"
-                resize_factor = 1.0
-                cpu_fallback_note = "Modo CPU seguro: se utilizó RealESRGAN_x2plus para evitar cierres inesperados."
-            elif scale == "4x":
-                model_key = "2x"
-                resize_factor = 2.0
-                cpu_fallback_note = "Modo CPU seguro: se utilizó RealESRGAN_x2plus con redimensionado a 4x para evitar cierres inesperados."
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Escala no válida: {scale}. Use '2x' o '4x'"
-                )
-
-        # Verificar si 4x excedería los límites
-        if (original_width * 4 > LIMIT_DIMENSION or original_height * 4 > LIMIT_DIMENSION) and scale == "2x":
-            use_2x_native = True # Forzar uso nativo de 2x para evitar error de "too large"
-        else:
-            use_2x_native = False
-
-        if not cpu_safe_mode:
-            resize_factor = 1.0
-            model_key_from_request = _normalize_model_key(model)
-
-            if model_key_from_request and not use_2x_native:
-                model_key = model_key_from_request
-                # Si el usuario eligió un modelo específico, respetamos su elección de escala
-                # Pero si eligió escala 2x con modelo 4x, debemos redimensionar
-                if scale == "2x" and MODELS[model_key]["scale"] == 4:
-                    resize_factor = 0.5
-            elif use_2x_native:
-                # Forzar modelo 2x porque la imagen es muy grande para 4x
-                model_key = "2x" # RealESRGAN_x2plus
-                resize_factor = 1.0
-            else:
-                # Auto-selección: Priorizar calidad (usar 4x) salvo que sea muy grande
-                
-                # Si es anime, usar modelo anime
-                if effective_image_type == "anime":
-                    model_key = "4x_anime"
-                else:
-                    model_key = "4x" # RealESRGAN_x4plus (mejor calidad general)
-                
-                # Ajustar factor de redimensionamiento según escala solicitada
-                if scale == "2x":
-                    resize_factor = 0.5
-                elif scale == "4x":
-                    resize_factor = 1.0
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Escala no válida: {scale}. Use '2x' o '4x'"
-                    )
-        
-        # Generar nombre de archivo de salida
-        # Incluir indicador de face_enhance en el nombre
-        suffix = "_face_enhanced" if face_enhance else ""
-        # Indicar si hubo redimensionamiento
-        if resize_factor != 1.0:
-            suffix += f"_resized_{scale}"
-            
-        # Mejora facial solo cuando el usuario la activa manualmente.
-        effective_face_enhance = face_enhance
-
-
-        output_filename = get_output_filename(
-            input_filename,
-            MODELS[model_key]["scale"] if resize_factor == 1.0 else int(MODELS[model_key]["scale"] * resize_factor),
-            MODELS[model_key]["name"] + suffix
+        # En CPU, para solicitudes 2x con imágenes muy grandes, usar 2x nativo.
+        limit_for_4x_side = 9000 if upscaler.device == "cpu" else 11800
+        use_2x_native_for_2x = (
+            scale == "2x"
+            and MODELS[model_key]["scale"] == 4
+            and (
+                original_width * 4 > limit_for_4x_side
+                or original_height * 4 > limit_for_4x_side
+            )
         )
-        output_path = OUTPUTS_DIR / output_filename
+        if use_2x_native_for_2x:
+            model_key = "2x"
+
+        model_scale = MODELS[model_key]["scale"]
+        resize_factor = requested_scale_value / model_scale
+        effective_face_enhance = face_enhance
+        cpu_fallback_note = None
 
         # Perfil de restauración para anti artefactos y sharpen por región
         processing_profile = {
@@ -231,17 +193,78 @@ async def upscale_image(
         )
         face_fidelity_mode = "balanced" if severe_face_degradation else "ultra"
 
+        # Plan de ejecución con fallback a 2x + resize cuando 4x falla por memoria/estabilidad.
+        attempt_plan = [{
+            "model_key": model_key,
+            "resize_factor": resize_factor,
+            "warning": None
+        }]
+        if requested_scale_value == 4 and MODELS[model_key]["scale"] == 4:
+            attempt_plan.append({
+                "model_key": "2x",
+                "resize_factor": 2.0,
+                "warning": "Fallback automático: se usó RealESRGAN_x2plus y redimensionado a 4x por límite de recursos."
+            })
+
+        # Evitar intentos duplicados
+        unique_attempts = []
+        seen = set()
+        for attempt in attempt_plan:
+            key = (attempt["model_key"], float(attempt["resize_factor"]))
+            if key not in seen:
+                seen.add(key)
+                unique_attempts.append(attempt)
+
         # Procesar upscaling
         started_at = perf_counter()
-        result = upscaler.upscale_image(
-            input_path=input_path,
-            output_path=output_path,
-            model_key=model_key,
-            face_enhance=effective_face_enhance,
-            resize_factor=resize_factor,
-            processing_profile=processing_profile,
-            face_fidelity=face_fidelity_mode
-        )
+        result = None
+        output_filename = ""
+        output_path = OUTPUTS_DIR / ""
+        last_error = None
+
+        for index, attempt in enumerate(unique_attempts):
+            attempt_model_key = attempt["model_key"]
+            attempt_resize = float(attempt["resize_factor"])
+            attempt_warning = attempt["warning"]
+
+            suffix = "_face_enhanced" if effective_face_enhance else ""
+            if attempt_resize != 1.0:
+                suffix += f"_resized_{scale}"
+            if attempt_warning:
+                suffix += "_fallback"
+
+            output_filename = get_output_filename(
+                input_filename,
+                MODELS[attempt_model_key]["scale"] if attempt_resize == 1.0 else int(MODELS[attempt_model_key]["scale"] * attempt_resize),
+                MODELS[attempt_model_key]["name"] + suffix
+            )
+            output_path = OUTPUTS_DIR / output_filename
+
+            try:
+                result = await run_in_threadpool(
+                    _run_upscale_locked,
+                    input_path=input_path,
+                    output_path=output_path,
+                    model_key=attempt_model_key,
+                    face_enhance=effective_face_enhance,
+                    resize_factor=attempt_resize,
+                    processing_profile=processing_profile,
+                    face_fidelity=face_fidelity_mode
+                )
+                if attempt_warning:
+                    cpu_fallback_note = attempt_warning
+                break
+            except Exception as attempt_error:
+                last_error = attempt_error
+                if index == len(unique_attempts) - 1:
+                    raise
+
+        if result is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al procesar imagen: {str(last_error) if last_error else 'falló el procesamiento'}"
+            )
+
         elapsed_seconds = perf_counter() - started_at
         
         # Agregar información adicional

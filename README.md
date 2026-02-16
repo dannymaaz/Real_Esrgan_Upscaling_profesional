@@ -27,9 +27,11 @@ Real-ESRGAN Upscaling Profesional es una aplicación web de escritorio que permi
 - 🤖 **Análisis Inteligente**: Detecta automáticamente el tipo de imagen y recomienda la mejor escala
 - 🚀 **Múltiples Modelos**: Soporte para modelos 2x, 4x, y 4x anime
 - 📤 **Drag & Drop**: Interfaz intuitiva con arrastrar y soltar
+- 📚 **Cola + Historial de Sesión**: Procesa varias imágenes y revisa/descarga resultados en la misma sesión
 - ⚡ **GPU Acelerado**: Usa GPU si está disponible, funciona en CPU también
 - 🔒 **100% Local**: Tus imágenes nunca salen de tu computadora
 - 📱 **Responsive**: Funciona en cualquier dispositivo
+- 🌐 **Multiplataforma**: Preparado para Windows, Linux y macOS
 
 ### 🎯 Modelos Disponibles
 
@@ -72,25 +74,43 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### Paso 3: Instalar Dependencias
+### Paso 3 (Recomendado): Setup automático multiplataforma
 
 ```bash
-pip install -r requirements.txt
+# Instalación rápida CPU (Windows/Linux/macOS)
+python setup_environment.py
+
+# Si tienes NVIDIA + CUDA 11.8
+python setup_environment.py --torch cu118
+
+# Si quieres mejora facial (GFPGAN)
+python setup_environment.py --with-face
 ```
 
-**Nota para GPU**: Si tienes una GPU NVIDIA y quieres usarla:
-```bash
-# Desinstalar PyTorch CPU
-pip uninstall torch torchvision
+Este script instala dependencias base, PyTorch según plataforma y descarga modelos.
 
-# Instalar PyTorch con CUDA (visita pytorch.org para tu versión específica)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+### Paso 3 (Manual): Instalar Dependencias
+
+```bash
+pip install -r requirements/base.txt
+pip install -r requirements/torch-cpu.txt
+
+# Opcional: mejora facial
+pip install -r requirements/face.txt
+```
+
+**Nota para GPU NVIDIA (manual)**:
+```bash
+pip install -r requirements/torch-cu118.txt --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ### Paso 4: Descargar Modelos
 
 ```bash
 python download_models.py
+
+# Instalación rápida (sin GFPGAN)
+python download_models.py --skip-face
 ```
 
 Este script descargará automáticamente los modelos necesarios (~500MB total).
@@ -111,9 +131,9 @@ La aplicación se abrirá automáticamente en tu navegador en `http://127.0.0.1:
 
 1. **Sube tu imagen**: Arrastra y suelta o haz clic para seleccionar
 2. **Revisa el análisis**: La app analizará tu imagen y recomendará configuración
-3. **Selecciona escala**: Elige 2x o 4x (o usa la recomendación)
-4. **Procesa**: Haz clic en "Procesar Imagen"
-5. **Descarga**: Descarga tu imagen mejorada
+3. **Selecciona escala/opciones**: Elige 2x o 4x y, si lo necesitas, mejora facial
+4. **Agrega a la cola**: Puedes ir analizando y configurando más imágenes mientras una se procesa
+5. **Historial de sesión**: Vuelve a ver y descargar resultados sin salir de la sesión
 
 ### Formatos Soportados
 
@@ -182,6 +202,16 @@ pip install -r requirements.txt
 - Asegúrate de tener una GPU compatible
 - Reduce el tamaño de la imagen antes de procesarla
 - Usa escala 2x en lugar de 4x
+
+### En CPU algunas imágenes no completan en 4x
+- La app intenta 4x real primero
+- Si no alcanza memoria/recursos, hace fallback automático a 2x + redimensionado a 4x
+- Verás una advertencia de procesamiento en el resultado
+
+### Problemas de instalación en macOS
+- Usa setup rápido sin GFPGAN: `python setup_environment.py`
+- Si necesitas mejora facial: `python setup_environment.py --with-face --skip-models`
+- En macOS no uses `--torch cu118` (CUDA no aplica)
 
 ### Error de memoria
 - Cierra otras aplicaciones

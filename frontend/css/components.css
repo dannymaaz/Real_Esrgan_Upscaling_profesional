@@ -343,6 +343,145 @@
     gap: var(--spacing-md);
 }
 
+/* ========== Queue + History ========== */
+.queue-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.btn-inline {
+    width: auto;
+    min-width: 96px;
+    padding: 0.45rem 0.9rem;
+    font-size: 0.85rem;
+}
+
+.queue-summary {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom: var(--spacing-sm);
+}
+
+.queue-list,
+.history-list {
+    display: grid;
+    gap: var(--spacing-sm);
+}
+
+.queue-item,
+.history-item {
+    background: hsla(220, 30%, 10%, 0.45);
+    border: 1px solid hsla(210, 100%, 56%, 0.18);
+    border-radius: var(--radius-md);
+    padding: 0.8rem;
+}
+
+.queue-item.active {
+    border-color: var(--primary-blue);
+    box-shadow: var(--glow-blue);
+}
+
+.queue-item-head,
+.history-item-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.queue-item-title,
+.history-item-title {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.queue-item-meta,
+.history-item-meta {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.status-ready {
+    color: hsl(190, 100%, 78%);
+    background: hsla(190, 100%, 50%, 0.14);
+    border-color: hsla(190, 100%, 50%, 0.35);
+}
+
+.status-queued {
+    color: hsl(42, 100%, 80%);
+    background: hsla(42, 100%, 50%, 0.14);
+    border-color: hsla(42, 100%, 50%, 0.35);
+}
+
+.status-processing {
+    color: hsl(210, 100%, 84%);
+    background: hsla(210, 100%, 56%, 0.2);
+    border-color: hsla(210, 100%, 56%, 0.4);
+}
+
+.status-done {
+    color: hsl(130, 75%, 84%);
+    background: hsla(130, 75%, 45%, 0.16);
+    border-color: hsla(130, 75%, 45%, 0.4);
+}
+
+.status-failed {
+    color: hsl(355, 100%, 85%);
+    background: hsla(355, 100%, 60%, 0.14);
+    border-color: hsla(355, 100%, 60%, 0.45);
+}
+
+.queue-actions,
+.history-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.mini-btn {
+    border: 1px solid hsla(210, 100%, 56%, 0.3);
+    background: hsla(220, 30%, 14%, 0.9);
+    color: var(--text-primary);
+    border-radius: 8px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.mini-btn:hover {
+    border-color: var(--primary-blue);
+    background: hsla(210, 100%, 56%, 0.12);
+}
+
+.mini-btn.danger {
+    border-color: hsla(355, 100%, 60%, 0.45);
+    color: hsl(355, 100%, 88%);
+}
+
+.mini-btn.danger:hover {
+    background: hsla(355, 100%, 60%, 0.18);
+}
+
 /* ========== Modal ========== */
 .modal {
     position: fixed;
@@ -416,5 +555,14 @@
 
     .result-actions {
         gap: var(--spacing-sm);
+    }
+
+    .queue-header-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .btn-inline {
+        width: 100%;
     }
 }

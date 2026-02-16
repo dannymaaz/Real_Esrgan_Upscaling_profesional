@@ -1,0 +1,5 @@
+# PyTorch con CUDA 11.8 (NVIDIA)
+# Instalar con:
+# pip install -r requirements/torch-cu118.txt --index-url https://download.pytorch.org/whl/cu118
+torch==2.1.2
+torchvision==0.16.2

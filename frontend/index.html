@@ -132,8 +132,30 @@
                             <path d="M13 10V3L4 14H11V21L20 10H13Z" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
-                        Procesar Imagen
+                        Agregar a cola
                     </button>
+                </div>
+            </section>
+
+            <section id="queuePanel" class="queue-panel" style="display: none;">
+                <div class="control-card glass-card">
+                    <div class="queue-header-row">
+                        <h3 class="section-title">Cola de procesamiento</h3>
+                        <button id="clearQueueBtn" type="button" class="btn-secondary btn-inline">Limpiar</button>
+                    </div>
+                    <p id="queueSummary" class="queue-summary">No hay tareas en cola.</p>
+                    <div id="queueList" class="queue-list"></div>
+                </div>
+            </section>
+
+            <section id="historyPanel" class="history-panel" style="display: none;">
+                <div class="control-card glass-card">
+                    <div class="queue-header-row">
+                        <h3 class="section-title">Historial de sesión</h3>
+                        <button id="clearHistoryBtn" type="button" class="btn-secondary btn-inline">Vaciar</button>
+                    </div>
+                    <p id="historySummary" class="queue-summary">Aún no hay imágenes procesadas.</p>
+                    <div id="historyList" class="history-list"></div>
                 </div>
             </section>
 
