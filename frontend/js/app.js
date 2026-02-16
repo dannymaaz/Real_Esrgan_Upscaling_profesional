@@ -19,6 +19,9 @@ let isQueueWorkerRunning = false;
 let showAllQueueItems = false;
 let showAllHistoryItems = false;
 let notificationPermissionRequested = false;
+let activeProcessingJobId = null;
+let activeAbortController = null;
+let pendingCancelJobId = null;
 
 let currentFile = null;
 let currentAnalysis = null;
@@ -84,6 +87,9 @@ function initializeEventListeners() {
     const bwRestoreBtn = document.getElementById('bwRestoreBtn');
     const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
     const imageTypeOverrideBtn = document.getElementById('imageTypeOverrideBtn');
+    const cancelConfirmModal = document.getElementById('cancelConfirmModal');
+    const cancelConfirmYesBtn = document.getElementById('cancelConfirmYesBtn');
+    const cancelConfirmNoBtn = document.getElementById('cancelConfirmNoBtn');
 
     dropzone.addEventListener('click', () => fileInput.click());
 
@@ -236,8 +242,38 @@ function initializeEventListeners() {
         });
     }
 
+    if (cancelConfirmYesBtn) {
+        cancelConfirmYesBtn.addEventListener('click', () => {
+            const targetJobId = pendingCancelJobId;
+            closeCancelConfirmModal();
+            if (targetJobId) {
+                cancelProcessingJob(targetJobId);
+            }
+        });
+    }
+
+    if (cancelConfirmNoBtn) {
+        cancelConfirmNoBtn.addEventListener('click', () => {
+            closeCancelConfirmModal();
+        });
+    }
+
+    if (cancelConfirmModal) {
+        cancelConfirmModal.addEventListener('click', (event) => {
+            if (event.target === cancelConfirmModal) {
+                closeCancelConfirmModal();
+            }
+        });
+    }
+
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
+            const isCancelModalOpen = Boolean(cancelConfirmModal && cancelConfirmModal.style.display !== 'none');
+            if (isCancelModalOpen) {
+                closeCancelConfirmModal();
+                return;
+            }
+
             const resultPanel = document.getElementById('resultPanel');
             if (resultPanel && resultPanel.style.display !== 'none') {
                 handleReturnToEditor();
@@ -257,10 +293,20 @@ function generateJobId() {
 
 function formatError(error, fallbackMessage) {
     const message = (error && error.message) ? String(error.message) : '';
+    if (error && error.name === 'AbortError') {
+        return 'Procesamiento cancelado por el usuario.';
+    }
     if (message.includes('Failed to fetch')) {
         return 'No se pudo conectar con el servidor. Verifica que el backend siga activo en http://127.0.0.1:8000';
     }
     return message || fallbackMessage;
+}
+
+function isAbortError(error) {
+    if (!error) return false;
+    if (error.name === 'AbortError') return true;
+    const msg = String(error.message || '').toLowerCase();
+    return msg.includes('cancelad') || msg.includes('aborted');
 }
 
 function formatDurationShort(seconds) {
@@ -598,6 +644,9 @@ async function runQueueWorker() {
             renderQueuePanel();
         }, 350);
 
+        activeProcessingJobId = job.id;
+        activeAbortController = new AbortController();
+
         try {
             const effectiveImageType = job.options.forcedImageType || job.analysis.image_type;
             let modelToSend = null;
@@ -615,7 +664,8 @@ async function runQueueWorker() {
                     removeColorFilter: job.options.removeColorFilter,
                     restoreOldPhoto: job.options.restoreOldPhoto,
                     dualOutput: job.options.dualOutput,
-                    restoreMonochrome: job.options.restoreMonochrome
+                    restoreMonochrome: job.options.restoreMonochrome,
+                    signal: activeAbortController.signal
                 }
             );
 
@@ -636,16 +686,26 @@ async function runQueueWorker() {
             }
         } catch (error) {
             clearInterval(progressTimer);
-            job.status = 'failed';
-            job.error = formatError(error, 'Error desconocido al procesar imagen');
-            job.progress = 100;
-            job.progressMessage = 'Finalizado con error';
+            if (isAbortError(error)) {
+                job.status = 'cancelled';
+                job.error = null;
+                job.progress = 100;
+                job.progressMessage = 'Cancelada';
+            } else {
+                job.status = 'failed';
+                job.error = formatError(error, 'Error desconocido al procesar imagen');
+                job.progress = 100;
+                job.progressMessage = 'Finalizado con error';
+            }
             job.updatedAt = Date.now();
             jobs.set(job.id, job);
 
-            if (selectedJobId === job.id) {
+            if (selectedJobId === job.id && job.status === 'failed') {
                 UIController.showError(job.error);
             }
+        } finally {
+            activeProcessingJobId = null;
+            activeAbortController = null;
         }
 
         renderQueuePanel();
@@ -670,6 +730,40 @@ function removeFromQueue(jobId) {
     if (index >= 0) {
         processQueue.splice(index, 1);
     }
+}
+
+function removeCompletedFromQueue(jobId) {
+    const job = jobs.get(jobId);
+    if (!job || job.status !== 'done') {
+        return;
+    }
+
+    const orderIndex = jobOrder.indexOf(jobId);
+    if (orderIndex >= 0) {
+        jobOrder.splice(orderIndex, 1);
+    }
+
+    renderQueuePanel();
+}
+
+function cancelProcessingJob(jobId) {
+    const job = jobs.get(jobId);
+    if (!job || job.status !== 'processing') {
+        return;
+    }
+
+    if (activeProcessingJobId === jobId && activeAbortController) {
+        try {
+            activeAbortController.abort();
+        } catch (_) {
+            // Ignorar fallos de abort.
+        }
+    }
+
+    job.progressMessage = 'Cancelando...';
+    job.updatedAt = Date.now();
+    jobs.set(job.id, job);
+    renderQueuePanel();
 }
 
 function removeJob(jobId) {
@@ -757,7 +851,7 @@ function pruneQueueBacklog() {
         const job = jobs.get(jobId);
         if (!job) return false;
         if (job.id === selectedJobId) return false;
-        return job.status === 'done' || job.status === 'failed';
+        return job.status === 'done' || job.status === 'failed' || job.status === 'cancelled';
     });
 
     while (jobOrder.length > keepLimit && removableIds.length > 0) {
@@ -815,6 +909,8 @@ function statusLabel(status) {
             return 'Procesando';
         case 'done':
             return 'Completada';
+        case 'cancelled':
+            return 'Cancelada';
         case 'failed':
             return 'Con error';
         default:
@@ -846,13 +942,18 @@ function renderQueuePanel() {
 
     setPanelVisibility('queuePanel', true);
 
-    const queuedCount = [...jobs.values()].filter((job) => job.status === 'queued').length;
-    const processingCount = [...jobs.values()].filter((job) => job.status === 'processing').length;
-    const doneCount = [...jobs.values()].filter((job) => job.status === 'done').length;
-    const failedCount = [...jobs.values()].filter((job) => job.status === 'failed').length;
+    const activeQueueJobs = jobOrder
+        .map((jobId) => jobs.get(jobId))
+        .filter((job) => Boolean(job));
+
+    const queuedCount = activeQueueJobs.filter((job) => job.status === 'queued').length;
+    const processingCount = activeQueueJobs.filter((job) => job.status === 'processing').length;
+    const doneCount = activeQueueJobs.filter((job) => job.status === 'done').length;
+    const failedCount = activeQueueJobs.filter((job) => job.status === 'failed').length;
+    const cancelledCount = activeQueueJobs.filter((job) => job.status === 'cancelled').length;
 
     const hiddenCount = Math.max(0, jobOrder.length - MAX_VISIBLE_QUEUE_ITEMS);
-    queueSummary.textContent = `Total: ${jobOrder.length} · En cola: ${queuedCount} · Procesando: ${processingCount} · Completadas: ${doneCount} · Errores: ${failedCount}`;
+    queueSummary.textContent = `Total: ${jobOrder.length} · En cola: ${queuedCount} · Procesando: ${processingCount} · Completadas: ${doneCount} · Canceladas: ${cancelledCount} · Errores: ${failedCount}`;
 
     if (toggleQueueViewBtn) {
         toggleQueueViewBtn.style.display = hiddenCount > 0 ? 'inline-flex' : 'none';
@@ -877,7 +978,11 @@ function renderQueuePanel() {
             if (job.status === 'done') {
                 actionButtons.push(`<button class="mini-btn" data-action="download" data-job-id="${job.id}">Descargar</button>`);
                 actionButtons.push(`<button class="mini-btn" data-action="retry" data-job-id="${job.id}">Reprocesar</button>`);
+            } else if (job.status === 'processing') {
+                actionButtons.push(`<button class="mini-btn danger" data-action="cancel" data-job-id="${job.id}">Cancelar</button>`);
             } else if (job.status === 'failed') {
+                actionButtons.push(`<button class="mini-btn" data-action="retry" data-job-id="${job.id}">Reintentar</button>`);
+            } else if (job.status === 'cancelled') {
                 actionButtons.push(`<button class="mini-btn" data-action="retry" data-job-id="${job.id}">Reintentar</button>`);
             } else if (job.status === 'ready') {
                 actionButtons.push(`<button class="mini-btn" data-action="enqueue" data-job-id="${job.id}">Encolar</button>`);
@@ -991,6 +1096,7 @@ function handleQueueActionClick(event) {
             selectJob(jobId);
             if (job.status === 'done') {
                 showResultForJob(job);
+                removeCompletedFromQueue(jobId);
             }
             break;
         case 'enqueue':
@@ -1004,11 +1110,19 @@ function handleQueueActionClick(event) {
         case 'retry':
             retryJob(jobId);
             break;
+        case 'cancel':
+            if (window.confirm('¿Seguro que deseas cancelar este procesamiento?')) {
+                cancelProcessingJob(jobId);
+            }
+            break;
         case 'remove':
             removeJob(jobId);
             break;
         case 'download':
             triggerDownload(job.result?.output_filename);
+            if (job.status === 'done') {
+                removeCompletedFromQueue(jobId);
+            }
             break;
         default:
             break;
@@ -1034,9 +1148,11 @@ function handleHistoryActionClick(event) {
             }
             selectJob(jobId);
             showResultForJob(job);
+            removeCompletedFromQueue(jobId);
             break;
         case 'history-download':
             triggerDownload(historyItem.outputFilename);
+            removeCompletedFromQueue(jobId);
             break;
         case 'history-remove': {
             const index = historyItems.findIndex((item) => item.jobId === jobId);
@@ -1137,6 +1253,7 @@ function notifyJobCompleted(job) {
             window.focus();
             selectJob(job.id);
             showResultForJob(job);
+            removeCompletedFromQueue(job.id);
             notification.close();
         };
     } catch (_) {

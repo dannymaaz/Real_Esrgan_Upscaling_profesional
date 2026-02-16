@@ -18,6 +18,11 @@ class APIClient {
         try {
             response = await fetch(`${API_BASE_URL}${path}`, options);
         } catch (error) {
+            if (error && error.name === 'AbortError') {
+                const abortErr = new Error('Solicitud cancelada por el usuario.');
+                abortErr.name = 'AbortError';
+                throw abortErr;
+            }
             throw new Error(
                 'No se pudo conectar con el servidor. Verifica que la app backend este activa en http://127.0.0.1:8000'
             );
@@ -97,7 +102,8 @@ class APIClient {
 
         return await this.requestJson('/api/upscale', {
             method: 'POST',
-            body: formData
+            body: formData,
+            signal: extraOptions?.signal
         });
     }
 

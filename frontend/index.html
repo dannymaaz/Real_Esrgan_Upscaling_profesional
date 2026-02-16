@@ -50,7 +50,7 @@
                         </svg>
                         <h3 class="dropzone-title">Arrastra tu imagen aquí</h3>
                         <p class="dropzone-text">o haz clic para seleccionar</p>
-                        <p class="dropzone-formats">PNG, JPG, JPEG, WEBP • Máx. 20MB</p>
+                        <p class="dropzone-formats">PNG, JPG, JPEG, WEBP, HEIC, HEIF • Máx. 20MB</p>
                         <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.heic,.heif" hidden>
                     </div>
                 </div>
@@ -326,10 +326,22 @@
         </div>
     </div>
 
+    <!-- Modal de confirmación para cancelar procesamiento -->
+    <div id="cancelConfirmModal" class="modal" style="display: none;">
+        <div class="modal-content glass-card">
+            <h3 class="modal-title">Cancelar procesamiento</h3>
+            <p id="cancelConfirmMessage" class="modal-message">¿Seguro que deseas cancelar este procesamiento?</p>
+            <div class="modal-actions">
+                <button id="cancelConfirmNoBtn" class="btn-secondary">No, continuar</button>
+                <button id="cancelConfirmYesBtn" class="btn-primary">Sí, cancelar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
-    <script src="/js/api-client.js?v=20260215e"></script>
-    <script src="/js/ui-controller.js?v=20260215e"></script>
-    <script src="/js/app.js?v=20260215e"></script>
+    <script src="/js/api-client.js?v=20260216a"></script>
+    <script src="/js/ui-controller.js?v=20260216a"></script>
+    <script src="/js/app.js?v=20260216a"></script>
 </body>
 
 </html>
