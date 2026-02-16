@@ -15,19 +15,20 @@ Esta es una aplicación de **upscaling de imágenes de grado profesional** dise�
 ### 🧠 ¿Qué nos hace diferentes?
 A diferencia de otros upscalers genéricos, este proyecto implementa una capa de inteligencia artificial personalizada que resuelve los problemas comunes de la restauración digital:
 
-*   **🛡️ Sistema Anti-Plástico (v2.0):** Inyección de micro-grano orgánico para evitar superficies lisas artificiales y mantener la textura real.
-*   **📱 Detector de Origen:** Identifica automáticamente si una foto proviene de WhatsApp, Instagram o Facebook, aplicando deblocking específico para combatir la compresión web.
-*   **🌙 Procesamiento Inteligente de Luz:** Detecta condiciones de baja iluminación (noche) para aplicar denoise conservador y preservar el detalle natural del grano.
-*   **✋ Protección de Extremidades:** Máscaras inteligentes para pies y manos que evitan el exceso de sharpening y halos extraños.
-*   **👤 Rostros Naturales:** Integración de GFPGAN con mezcla alfa localizada para mejorar rostros sin perder la identidad original.
+*   **🛡️ Sistema Anti-Plástico (v2.0):** Inyección de micro-grano orgánico para evitar superficies lisas artificiales y mantener la textura real en la piel y telas.
+*   **📱 Detector de Origen Digital:** Identifica automáticamente si una foto proviene de **WhatsApp, Instagram o Facebook**, aplicando técnicas de *deblocking* específicas para combatir la compresión agresiva de la web.
+*   **🌙 Procesamiento Inteligente de Luz:** Analiza la luminancia de la imagen para detectar condiciones de baja iluminación (noche), ajustando el denoise para no borrar el detalle natural del grano fotográfico.
+*   **💾 Optimización Dinámica de Memoria:** Implementa *tiling* adaptativo y pre-redimensionado seguro, permitiendo procesar imágenes de ultra alta resolución (4K/8K) incluso en hardware con recursos limitados.
+*   **🎨 Restauración de Filtros y B/N:** Capacidad experimental para detectar fotos monocromáticas o escaneos antiguos, reduciendo dominantes cromáticas artificiales para recuperar la naturalidad.
+*   **✋ Protección de Detalles Sensibles:** Máscaras inteligentes para manos, pies y rostros que evitan el exceso de nitidez (*oversharpening*) y halos extraños en los bordes.
 
 ---
 
 ## 🛠️ Tecnologías Utilizadas
-- **Backend:** FastAPI (Python)
-- **Modelos IA:** Real-ESRGAN (x2+, x4+, Anime) & GFPGAN (v1.3)
-- **Procesamiento:** OpenCV & PyTorch
-- **Frontend:** Vanilla JS & Modern CSS (Glassmorphism & Futuristic Design)
+- **Backend:** FastAPI (Python) para una comunicación ultrarrápida.
+- **Modelos IA:** Real-ESRGAN (x2+, x4+, Anime) & GFPGAN (v1.3) para rostros.
+- **Procesamiento:** OpenCV, PyTorch & NumPy.
+- **Frontend:** Vanilla JS & Modern CSS con efectos de *Glassmorphism* y animaciones fluidas.
 
 ---
 
@@ -57,14 +58,14 @@ A diferencia de otros upscalers genéricos, este proyecto implementa una capa de
 ---
 
 ## 🛡️ Seguridad y Optimización
-*   **Manejo de Errores:** Sistema de logs detallado para rastreo de fallos en tiempo real.
-*   **Optimización de Memoria:** Procesamiento por bloques (tiling) para escalar imágenes 4K incluso en máquinas con recursos limitados.
-*   **Privacidad:** Limpieza automática de archivos temporales cada 24 horas.
+*   **Gestión de Errores:** Monitoreo activo de logs (`server_log.txt`) para detectar fallos de hardware o memoria en tiempo real.
+*   **Escalabilidad:** Código modular estructurado para añadir nuevos modelos de IA con facilidad.
+*   **Privacidad Efímera:** Sistema automático que elimina archivos procesados después de 24 horas para proteger la privacidad del usuario.
 
 ---
 
 ## ☕ Apoya el Proyecto
-Si este proyecto te ha sido útil, considera apoyarme para seguir desarrollando herramientas de IA de alta calidad:
+Si este proyecto te ha sido útil, considera apoyarme para seguir desarrollando herramientas de IA de alta fidelidad:
 
 <div align="center">
   <a href="https://paypal.me/Creativegt" target="_blank" rel="noopener noreferrer">
