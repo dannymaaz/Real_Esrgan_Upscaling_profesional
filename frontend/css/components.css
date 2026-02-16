@@ -392,6 +392,12 @@
     margin-bottom: var(--spacing-sm);
 }
 
+.queue-header-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
 .btn-inline {
     width: auto;
     min-width: 96px;
@@ -409,6 +415,9 @@
 .history-list {
     display: grid;
     gap: var(--spacing-sm);
+    max-height: 360px;
+    overflow-y: auto;
+    padding-right: 0.2rem;
 }
 
 .queue-item,
@@ -417,6 +426,7 @@
     border: 1px solid hsla(210, 100%, 56%, 0.18);
     border-radius: var(--radius-md);
     padding: 0.8rem;
+    transition: border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .queue-item.active {
@@ -522,6 +532,95 @@
     background: hsla(355, 100%, 60%, 0.18);
 }
 
+.queue-progress {
+    margin-top: 0.55rem;
+}
+
+.queue-progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+}
+
+.queue-progress-bar {
+    width: 100%;
+    height: 5px;
+    background: hsla(220, 25%, 18%, 0.9);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.queue-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--primary-blue), var(--accent-blue));
+    border-radius: 999px;
+    transition: width 0.35s linear;
+}
+
+.result-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    background: rgba(7, 12, 24, 0.62);
+    backdrop-filter: blur(9px);
+    -webkit-backdrop-filter: blur(9px);
+    padding: 1.25rem;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.22s ease;
+}
+
+.result-card {
+    width: min(1200px, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    animation: scaleIn 0.22s ease;
+}
+
+.result-variant-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: -0.2rem 0 0.8rem;
+}
+
+.variant-btn {
+    border: 1px solid hsla(210, 100%, 56%, 0.35);
+    background: hsla(220, 30%, 12%, 0.85);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.variant-btn.active {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+    background: hsla(190, 100%, 60%, 0.16);
+}
+
+.panel-fade {
+    transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.panel-fade.is-hidden {
+    opacity: 0;
+    transform: translateY(-6px);
+    pointer-events: none;
+}
+
+body.modal-open {
+    overflow: hidden;
+}
+
 /* ========== Modal ========== */
 .modal {
     position: fixed;
@@ -611,7 +710,25 @@
         align-items: stretch;
     }
 
+    .queue-header-actions {
+        width: 100%;
+    }
+
     .btn-inline {
         width: 100%;
+    }
+
+    .queue-list,
+    .history-list {
+        max-height: 300px;
+    }
+
+    .result-panel {
+        padding: 0.6rem;
+    }
+
+    .result-card {
+        width: calc(100vw - 0.6rem);
+        max-height: calc(100vh - 0.6rem);
     }
 }

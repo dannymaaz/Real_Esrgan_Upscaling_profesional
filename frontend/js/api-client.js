@@ -60,9 +60,10 @@ class APIClient {
      * @param {string} model - Modelo específico (opcional)
      * @param {boolean} faceEnhance - Activar mejora de rostros (opcional)
      * @param {string|null} forcedImageType - Override manual del tipo (opcional)
+     * @param {Object} extraOptions - Opciones avanzadas de restauración
      * @returns {Promise<Object>} Resultado del procesamiento
      */
-    static async upscaleImage(file, scale, model = null, faceEnhance = false, forcedImageType = null) {
+    static async upscaleImage(file, scale, model = null, faceEnhance = false, forcedImageType = null, extraOptions = {}) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('scale', scale);
@@ -78,6 +79,16 @@ class APIClient {
         }
         if (forcedImageType) {
             formData.append('forced_image_type', forcedImageType);
+        }
+
+        if (extraOptions?.removeFilter) {
+            formData.append('remove_filter', 'true');
+        }
+        if (extraOptions?.dualOutput) {
+            formData.append('dual_output', 'true');
+        }
+        if (extraOptions?.restoreMonochrome) {
+            formData.append('restore_bw', 'true');
         }
 
         return await this.requestJson('/api/upscale', {

@@ -315,6 +315,137 @@ class RealESRGANUpscaler:
             setattr(upsampler, "tile", runtime_tile)
         except Exception:
             pass
+
+    def _compute_safe_preresize_factor(
+        self,
+        width: int,
+        height: int,
+        scale: int,
+        max_input_dimension: int,
+        memory_limit_mb: float
+    ) -> float:
+        """Calcula factor de pre-redimensionado para modo seguro (sin perder demasiado detalle)."""
+        factor = 1.0
+
+        max_side = max(width, height)
+        if max_side > max_input_dimension:
+            factor = min(factor, max_input_dimension / max_side)
+
+        estimated_memory_mb = (width * height * 3 * scale * scale * 4) / (1024 * 1024)
+        safe_target_mb = memory_limit_mb * 0.82
+        if estimated_memory_mb > safe_target_mb and safe_target_mb > 0:
+            memory_factor = float(np.sqrt(safe_target_mb / max(1e-6, estimated_memory_mb)))
+            factor = min(factor, memory_factor)
+
+        # Evitar reducción extrema para preservar calidad.
+        return float(np.clip(factor, 0.58, 1.0))
+
+    def _apply_filter_reduction(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, bool]:
+        """
+        Reduce dominantes de filtro (saturación/curva) para recuperar aspecto natural.
+        """
+        if not profile.get("remove_filter"):
+            return img, False
+
+        img = self._ensure_bgr_uint8(img)
+        filter_strength = profile.get("filter_strength", "medium")
+
+        if filter_strength == "high":
+            saturation_factor = 0.78
+            wb_blend = 0.42
+        elif filter_strength == "low":
+            saturation_factor = 0.9
+            wb_blend = 0.26
+        else:
+            saturation_factor = 0.84
+            wb_blend = 0.34
+
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation_factor, 0, 255)
+        filter_reduced = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+        # Balance de blancos suave (gray-world) para neutralizar cast.
+        b, g, r = cv2.split(filter_reduced.astype(np.float32))
+        mean_b = float(np.mean(b))
+        mean_g = float(np.mean(g))
+        mean_r = float(np.mean(r))
+        gray_mean = max(1.0, (mean_b + mean_g + mean_r) / 3.0)
+        b *= gray_mean / max(1.0, mean_b)
+        g *= gray_mean / max(1.0, mean_g)
+        r *= gray_mean / max(1.0, mean_r)
+        balanced = cv2.merge([
+            np.clip(b, 0, 255),
+            np.clip(g, 0, 255),
+            np.clip(r, 0, 255)
+        ]).astype(np.uint8)
+
+        # Mezcla para conservar esencia original.
+        blended = cv2.addWeighted(filter_reduced, 1.0 - wb_blend, balanced, wb_blend, 0)
+
+        if profile.get("old_photo_detected") or profile.get("scan_artifacts_detected"):
+            lab = cv2.cvtColor(blended, cv2.COLOR_BGR2LAB)
+            l, a, bch = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=1.65, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            blended = cv2.cvtColor(cv2.merge([l, a, bch]), cv2.COLOR_LAB2BGR)
+
+        return blended, True
+
+    def _restore_monochrome_photo(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, bool]:
+        """
+        Restauración experimental para imágenes B/N: recupera color de forma conservadora.
+        """
+        if not (profile.get("restore_monochrome") and profile.get("is_monochrome")):
+            return img, False
+
+        img = self._ensure_bgr_uint8(img)
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
+        l_channel = lab[:, :, 0]
+        a_channel = lab[:, :, 1]
+        b_channel = lab[:, :, 2]
+
+        # Si existe mínima croma residual, amplificarla suavemente.
+        residual_chroma = float(np.mean(np.abs(a_channel - 128)) + np.mean(np.abs(b_channel - 128)))
+        if residual_chroma > 4.0:
+            a_boost = 128 + (a_channel - 128) * 2.4
+            b_boost = 128 + (b_channel - 128) * 2.4
+            recolored_lab = np.stack([
+                l_channel,
+                np.clip(a_boost, 90, 170),
+                np.clip(b_boost, 85, 180)
+            ], axis=2).astype(np.uint8)
+            recolored = cv2.cvtColor(recolored_lab, cv2.COLOR_LAB2BGR)
+        else:
+            # Fallback: colorización tonal muy suave para evitar resultado artificial.
+            l_norm = np.clip(l_channel / 255.0, 0.0, 1.0)
+            a_tint = 128 + (l_norm - 0.5) * 8 + 2.5
+            b_tint = 128 + (l_norm - 0.5) * 14 + 6
+            toned_lab = np.stack([
+                l_channel,
+                np.clip(a_tint, 110, 152),
+                np.clip(b_tint, 110, 168)
+            ], axis=2).astype(np.uint8)
+            recolored = cv2.cvtColor(toned_lab, cv2.COLOR_LAB2BGR)
+
+        recolored = cv2.addWeighted(img, 0.42, recolored, 0.58, 0)
+        return recolored, True
+
+    def _apply_preprocess_options(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, Dict]:
+        """Aplica restauraciones opcionales previas al escalado."""
+        metadata = {
+            "filter_restoration_applied": False,
+            "bw_restoration_applied": False
+        }
+
+        working = self._ensure_bgr_uint8(img)
+
+        working, filter_applied = self._apply_filter_reduction(working, profile)
+        metadata["filter_restoration_applied"] = bool(filter_applied)
+
+        working, bw_applied = self._restore_monochrome_photo(working, profile)
+        metadata["bw_restoration_applied"] = bool(bw_applied)
+
+        return working, metadata
     
     def load_model(self, model_key: str) -> RealESRGANer:
         """
@@ -431,27 +562,54 @@ class RealESRGANUpscaler:
             # (Si se requiere transparencia, se necesita manejo más complejo)
             img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
             
-        original_height, original_width = img.shape[:2]
-        total_pixels = original_width * original_height
+        if processing_profile is None:
+            processing_profile = {}
+
+        source_height, source_width = img.shape[:2]
+        scale = MODELS[model_key]["scale"]
+
+        target_final_width = max(1, int(round(source_width * scale * resize_factor)))
+        target_final_height = max(1, int(round(source_height * scale * resize_factor)))
+
+        # Restauraciones opcionales antes del modelo (filtro/BN).
+        img, preprocess_metadata = self._apply_preprocess_options(img, processing_profile)
 
         # VALIDACIÓN DE DIMENSIONES PARA EVITAR ERRORES DE MEMORIA
         max_input_dimension = 6200 if self.device == 'cuda' else 4800
         max_output_dimension = 12400 if self.device == 'cuda' else 9600
         max_output_pixels = 140_000_000 if self.device == 'cuda' else 75_000_000
-        scale = MODELS[model_key]["scale"]
-        
-        # Verificar dimensiones originales
+        memory_limit_mb = 7000 if self.device == 'cuda' else 4500
+
+        pre_resize_applied = False
+        pre_resize_factor = 1.0
+        if processing_profile.get("safe_pre_resize", False):
+            pre_resize_factor = self._compute_safe_preresize_factor(
+                width=source_width,
+                height=source_height,
+                scale=scale,
+                max_input_dimension=max_input_dimension,
+                memory_limit_mb=memory_limit_mb
+            )
+
+            if pre_resize_factor < 0.995:
+                safe_w = max(1, int(round(source_width * pre_resize_factor)))
+                safe_h = max(1, int(round(source_height * pre_resize_factor)))
+                img = cv2.resize(img, (safe_w, safe_h), interpolation=cv2.INTER_AREA)
+                pre_resize_applied = True
+
+        original_height, original_width = img.shape[:2]
+        total_pixels = original_width * original_height
+
+        # Verificar dimensiones de trabajo
         if original_width > max_input_dimension or original_height > max_input_dimension:
             raise ValueError(
                 f"Imagen demasiado grande ({original_width}x{original_height}). "
                 f"Dimensión máxima permitida: {max_input_dimension}px. "
                 f"Por favor, reduce el tamaño de la imagen antes de procesarla."
             )
-        
-        # Verificar dimensiones después del escalado
+
         output_width = original_width * scale
         output_height = original_height * scale
-        
         if (
             output_width > max_output_dimension
             or output_height > max_output_dimension
@@ -462,25 +620,28 @@ class RealESRGANUpscaler:
                 f"Límite actual aproximado: {max_output_dimension}px por lado. "
                 f"Considera usar una escala menor (2x en lugar de 4x)."
             )
-        
-        # Estimar uso de memoria (aproximado) con más margen
-        estimated_memory_mb = (original_width * original_height * 3 * scale * scale * 4) / (1024 * 1024) # *4 bytes (float32)
-        memory_limit_mb = 7000 if self.device == 'cuda' else 4500
+
+        estimated_memory_mb = (original_width * original_height * 3 * scale * scale * 4) / (1024 * 1024)
         if estimated_memory_mb > memory_limit_mb:
             raise ValueError(
                 f"Esta imagen requiere demasiada memoria (~{estimated_memory_mb:.0f}MB). "
                 f"Por favor, usa una imagen más pequeña o una escala menor."
             )
-        
-        if processing_profile is None:
-            processing_profile = {}
+
+        face_enhance_effective = bool(face_enhance)
+        face_enhance_skipped = False
+        if face_enhance_effective and self.device == 'cpu':
+            projected_output_pixels = int(original_width * original_height * scale * scale)
+            if projected_output_pixels > 20_000_000:
+                face_enhance_effective = False
+                face_enhance_skipped = True
 
         # Ajuste dinámico de tile para mayor estabilidad y permitir más casos en 4x.
         self._configure_runtime_tiling(upsampler, total_pixels)
 
         # Procesar upscaling
         try:
-            if face_enhance and HAS_GFPGAN and GFPGAN_MODEL_PATH.exists():
+            if face_enhance_effective and HAS_GFPGAN and GFPGAN_MODEL_PATH.exists():
                 # 1) Upscaling base con Real-ESRGAN.
                 output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
 
@@ -520,6 +681,15 @@ class RealESRGANUpscaler:
                 resize_interpolation = cv2.INTER_AREA
             output = cv2.resize(output, (new_width, new_height), interpolation=resize_interpolation)
 
+        # Si hubo pre-redimensionado de seguridad, devolver al tamaño final objetivo.
+        safe_mode_output_downscaled = False
+        if pre_resize_applied:
+            if output.shape[1] != target_final_width or output.shape[0] != target_final_height:
+                try:
+                    output = cv2.resize(output, (target_final_width, target_final_height), interpolation=cv2.INTER_LANCZOS4)
+                except (cv2.error, MemoryError):
+                    safe_mode_output_downscaled = True
+
         # Post-proceso adaptativo anti artefactos
         # Desactivar si la imagen es muy grande (>8MP) para evitar OOM
         postprocess_applied = False
@@ -551,17 +721,23 @@ class RealESRGANUpscaler:
             "model_used": MODELS[model_key]["name"],
             "scale": MODELS[model_key]["scale"] * resize_factor,
             "original_size": {
-                "width": original_width,
-                "height": original_height
+                "width": source_width,
+                "height": source_height
             },
             "output_size": {
                 "width": final_width,
                 "height": final_height
             },
             "device_used": self.device,
-            "face_enhance": face_enhance,
+            "face_enhance": face_enhance_effective,
+            "face_enhance_skipped": face_enhance_skipped,
             "postprocess_applied": postprocess_applied,
-            "detail_boost_applied": detail_boost_applied
+            "detail_boost_applied": detail_boost_applied,
+            "safe_pre_resize_applied": pre_resize_applied,
+            "safe_pre_resize_factor": round(pre_resize_factor, 3),
+            "safe_mode_output_downscaled": safe_mode_output_downscaled,
+            "filter_restoration_applied": preprocess_metadata.get("filter_restoration_applied", False),
+            "bw_restoration_applied": preprocess_metadata.get("bw_restoration_applied", False)
         }
 
     def _apply_photo_detail_boost(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, bool]:

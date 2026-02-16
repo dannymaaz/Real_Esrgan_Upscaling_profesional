@@ -75,6 +75,10 @@
                             <span class="info-label">Tamaño:</span>
                             <span id="imageSize" class="info-value">-</span>
                         </div>
+                        <div class="info-row">
+                            <span class="info-label">Filtros detectados:</span>
+                            <span id="imageFilterState" class="info-value">-</span>
+                        </div>
                     </div>
 
                     <!-- Selector de escala -->
@@ -111,6 +115,33 @@
                         <p class="option-description" id="imageTypeOverrideDescription"></p>
                     </div>
 
+                    <div class="processing-options" id="filterRestoreContainer" style="display: none;">
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="removeFilterBtn">
+                            <span class="checkmark"></span>
+                            <span class="label-text">Reducir filtro y restaurar color</span>
+                        </label>
+                        <p class="option-description" id="filterRestoreDescription">Mejora tono, contraste y color para recuperar naturalidad antes del escalado.</p>
+                    </div>
+
+                    <div class="processing-options" id="dualOutputContainer" style="display: none;">
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="dualOutputBtn">
+                            <span class="checkmark"></span>
+                            <span class="label-text">Generar doble salida (comparar)</span>
+                        </label>
+                        <p class="option-description">Creará versión con y sin restauración. Tarda más tiempo.</p>
+                    </div>
+
+                    <div class="processing-options" id="bwRestoreContainer" style="display: none;">
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="bwRestoreBtn">
+                            <span class="checkmark"></span>
+                            <span class="label-text">Restaurar foto en blanco y negro</span>
+                        </label>
+                        <p class="option-description">Modo experimental para recuperar color de forma natural.</p>
+                    </div>
+
 
                     <!-- Recomendación -->
                     <div id="recommendation" class="recommendation" style="display: none;">
@@ -141,7 +172,10 @@
                 <div class="control-card glass-card">
                     <div class="queue-header-row">
                         <h3 class="section-title">Cola de procesamiento</h3>
-                        <button id="clearQueueBtn" type="button" class="btn-secondary btn-inline">Limpiar</button>
+                        <div class="queue-header-actions">
+                            <button id="toggleQueueViewBtn" type="button" class="btn-secondary btn-inline" style="display:none;">Ver más</button>
+                            <button id="clearQueueBtn" type="button" class="btn-secondary btn-inline">Limpiar</button>
+                        </div>
                     </div>
                     <p id="queueSummary" class="queue-summary">No hay tareas en cola.</p>
                     <div id="queueList" class="queue-list"></div>
@@ -152,7 +186,10 @@
                 <div class="control-card glass-card">
                     <div class="queue-header-row">
                         <h3 class="section-title">Historial de sesión</h3>
-                        <button id="clearHistoryBtn" type="button" class="btn-secondary btn-inline">Vaciar</button>
+                        <div class="queue-header-actions">
+                            <button id="toggleHistoryViewBtn" type="button" class="btn-secondary btn-inline" style="display:none;">Ver más</button>
+                            <button id="clearHistoryBtn" type="button" class="btn-secondary btn-inline">Vaciar</button>
+                        </div>
                     </div>
                     <p id="historySummary" class="queue-summary">Aún no hay imágenes procesadas.</p>
                     <div id="historyList" class="history-list"></div>
@@ -175,7 +212,7 @@
 
             <!-- Panel de resultados -->
             <section id="resultPanel" class="result-panel" style="display: none;">
-                <div class="result-card glass-card">
+                <div class="result-card glass-card" role="dialog" aria-modal="true" aria-label="Resultado de imagen">
                     <div class="result-header">
                         <h3 class="result-title">¡Imagen Mejorada! ✨</h3>
                         <div class="result-tools">
@@ -189,6 +226,8 @@
                             <p class="comparison-tip">Rueda: zoom · Arrastrar: mover · Handle: comparar</p>
                         </div>
                     </div>
+
+                    <div id="resultVariantSelector" class="result-variant-selector" style="display: none;"></div>
 
                     <div class="comparison-container" id="comparisonContainer">
                         <div class="image-comparison">
@@ -222,7 +261,7 @@
                             Descargar Imagen
                         </button>
                         <button id="newImageBtn" class="btn-secondary">
-                            Procesar otra imagen
+                            Cerrar
                         </button>
                     </div>
                 </div>

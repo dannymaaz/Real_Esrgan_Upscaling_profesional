@@ -27,6 +27,18 @@ class UIController {
         document.getElementById('imageSize').textContent =
             `${analysis.file_size_mb} MB`;
 
+        const filterState = document.getElementById('imageFilterState');
+        if (filterState) {
+            if (analysis.filter_detected) {
+                const strength = analysis.filter_strength || 'medium';
+                filterState.textContent = `Sí (${strength})`;
+            } else if (analysis.is_monochrome) {
+                filterState.textContent = 'Blanco y negro detectado';
+            } else {
+                filterState.textContent = 'No';
+            }
+        }
+
         // Mostrar recomendación
         const recommendation = document.getElementById('recommendation');
         const recommendationText = document.getElementById('recommendationText');
@@ -82,6 +94,38 @@ class UIController {
             }
         }
 
+        const filterRestoreContainer = document.getElementById('filterRestoreContainer');
+        const removeFilterBtn = document.getElementById('removeFilterBtn');
+        const filterRestoreDescription = document.getElementById('filterRestoreDescription');
+        const dualOutputContainer = document.getElementById('dualOutputContainer');
+        const dualOutputBtn = document.getElementById('dualOutputBtn');
+        const bwRestoreContainer = document.getElementById('bwRestoreContainer');
+        const bwRestoreBtn = document.getElementById('bwRestoreBtn');
+
+        const canRestoreFilter = Boolean(analysis.filter_detected || analysis.old_photo_detected || analysis.scan_artifacts_detected);
+        if (filterRestoreContainer && removeFilterBtn) {
+            filterRestoreContainer.style.display = canRestoreFilter ? 'block' : 'none';
+            removeFilterBtn.checked = false;
+
+            if (filterRestoreDescription) {
+                if (analysis.old_photo_detected || analysis.scan_artifacts_detected) {
+                    filterRestoreDescription.textContent = 'Ideal para fotos antiguas/escaneadas con dominante de color, polvo o bajo contraste.';
+                } else {
+                    filterRestoreDescription.textContent = 'Mejora tono, contraste y color para recuperar naturalidad antes del escalado.';
+                }
+            }
+        }
+
+        if (dualOutputContainer && dualOutputBtn) {
+            dualOutputContainer.style.display = 'none';
+            dualOutputBtn.checked = false;
+        }
+
+        if (bwRestoreContainer && bwRestoreBtn) {
+            bwRestoreContainer.style.display = analysis.is_monochrome ? 'block' : 'none';
+            bwRestoreBtn.checked = false;
+        }
+
         // Seleccionar automáticamente la escala recomendada
         const scaleButtons = document.querySelectorAll('.scale-btn');
         scaleButtons.forEach(btn => {
@@ -95,6 +139,7 @@ class UIController {
 
         // Mostrar panel
         controlPanel.style.display = 'block';
+        controlPanel.classList.remove('is-hidden');
     }
 
     /**
@@ -140,12 +185,16 @@ class UIController {
         console.log('showResult called with data:', data);
 
         document.getElementById('processingPanel').style.display = 'none';
+        document.getElementById('controlPanel').style.display = 'none';
         const resultPanel = document.getElementById('resultPanel');
-        resultPanel.style.display = 'block';
+        resultPanel.style.display = 'flex';
+        document.body.classList.add('modal-open');
 
         // Configurar imágenes para comparación
         const originalImg = document.getElementById('originalImage');
         const processedImg = document.getElementById('processedImage');
+        const variantSelector = document.getElementById('resultVariantSelector');
+        const downloadBtn = document.getElementById('downloadBtn');
 
         console.log('Image elements:', { originalImg, processedImg });
 
@@ -168,7 +217,15 @@ class UIController {
         // Cargar imagen original
         let originalSrc = null;
         if (window.currentFile) {
+            if (this._currentOriginalObjectUrl) {
+                try {
+                    URL.revokeObjectURL(this._currentOriginalObjectUrl);
+                } catch (_) {
+                    // Ignorar
+                }
+            }
             originalSrc = URL.createObjectURL(window.currentFile);
+            this._currentOriginalObjectUrl = originalSrc;
             console.log('Using window.currentFile for original image');
         } else {
             const fileInput = document.getElementById('fileInput');
@@ -180,23 +237,73 @@ class UIController {
             }
         }
 
-        // Cargar imagen procesada
-        const processedSrc = `${APIClient.BASE_URL}/api/download/${data.output_filename}?t=${new Date().getTime()}`;
-        console.log('Processed image URL:', processedSrc);
+        const outputVariants = Array.isArray(data.output_variants) && data.output_variants.length > 0
+            ? data.output_variants
+            : [{
+                label: 'Resultado',
+                output_filename: data.output_filename,
+                is_default: true
+            }];
 
-        // Cargar ambas imágenes en paralelo
-        Promise.all([
-            originalSrc ? loadImage(originalImg, originalSrc, 'Original') : Promise.reject('No original source'),
-            loadImage(processedImg, processedSrc, 'Processed')
-        ]).then(() => {
-            console.log('Both images loaded successfully');
-            // Configurar slider de comparación después de que las imágenes se carguen
+        let selectedVariant = outputVariants.find((v) => v.is_default) || outputVariants[0];
+
+        const loadComparison = async (variant) => {
+            const processedSrc = `${APIClient.BASE_URL}/api/download/${variant.output_filename}?t=${new Date().getTime()}`;
+            console.log('Processed image URL:', processedSrc);
+
+            await Promise.all([
+                originalSrc ? loadImage(originalImg, originalSrc, 'Original') : Promise.reject(new Error('No original source')),
+                loadImage(processedImg, processedSrc, 'Processed')
+            ]);
+
             this.setupComparisonSlider();
             this.setupZoomControls();
-        }).catch((error) => {
-            console.error('Error loading images:', error);
-            UIController.showError('Error al cargar las imágenes: ' + error.message);
-        });
+        };
+
+        const renderVariantSelector = () => {
+            if (!variantSelector) return;
+
+            if (outputVariants.length <= 1) {
+                variantSelector.style.display = 'none';
+                variantSelector.innerHTML = '';
+                return;
+            }
+
+            variantSelector.style.display = 'flex';
+            variantSelector.innerHTML = outputVariants
+                .map((variant, index) => {
+                    const isActive = variant.output_filename === selectedVariant.output_filename;
+                    const label = variant.label || `Versión ${index + 1}`;
+                    return `<button class="variant-btn ${isActive ? 'active' : ''}" data-filename="${variant.output_filename}">${label}</button>`;
+                })
+                .join('');
+
+            variantSelector.querySelectorAll('button[data-filename]').forEach((btn) => {
+                btn.onclick = async () => {
+                    const targetFile = btn.dataset.filename;
+                    const targetVariant = outputVariants.find((item) => item.output_filename === targetFile);
+                    if (!targetVariant) return;
+                    selectedVariant = targetVariant;
+                    renderVariantSelector();
+                    try {
+                        await loadComparison(selectedVariant);
+                    } catch (error) {
+                        UIController.showError('Error al cargar la variante seleccionada: ' + error.message);
+                    }
+                };
+            });
+        };
+
+        loadComparison(selectedVariant)
+            .then(() => {
+                console.log('Comparison loaded successfully');
+            })
+            .catch((error) => {
+                console.error('Error loading images:', error);
+                UIController.showError('Error al cargar las imágenes: ' + error.message);
+            });
+
+        renderVariantSelector();
 
         const formattedScaleTime = this.formatDuration(data.processing_time_seconds);
         const formattedAnalysisTime = this.formatDuration(data.analysis_time_seconds);
@@ -231,6 +338,14 @@ class UIController {
                 <span class="info-value">${data.face_enhance ? 'Sí' : 'No'}</span>
             </div>
             <div class="info-row">
+                <span class="info-label">Restauración filtro:</span>
+                <span class="info-value">${data.filter_restoration_applied ? 'Aplicada' : 'No'}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Restauración B/N:</span>
+                <span class="info-value">${data.bw_restoration_applied ? 'Aplicada' : 'No'}</span>
+            </div>
+            <div class="info-row">
                 <span class="info-label">Análisis:</span>
                 <span class="info-value time-value"><span class="time-chip">${formattedAnalysisTime}</span></span>
             </div>
@@ -247,15 +362,19 @@ class UIController {
                 <span class="info-label">Tipo corregido:</span>
                 <span class="info-value">${data.analysis_image_type} → ${data.effective_image_type}</span>
             </div>` : ''}
+            ${data.processing_warning ? `
+            <div class="info-row">
+                <span class="info-label">Aviso:</span>
+                <span class="info-value" style="max-width: 70%; text-align: right; color: hsl(42, 100%, 74%);">${data.processing_warning}</span>
+            </div>` : ''}
         `;
 
         // Configurar botón de descarga
-        const downloadBtn = document.getElementById('downloadBtn');
         downloadBtn.onclick = () => {
             // Crear enlace temporal para descarga directa
             const link = document.createElement('a');
-            link.href = APIClient.getDownloadUrl(data.output_filename);
-            link.download = data.output_filename;
+            link.href = APIClient.getDownloadUrl(selectedVariant.output_filename);
+            link.download = selectedVariant.output_filename;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -268,6 +387,12 @@ class UIController {
                 return;
             }
             location.reload();
+        };
+
+        resultPanel.onclick = (event) => {
+            if (event.target === resultPanel && window.AppController && typeof window.AppController.onNewImageRequested === 'function') {
+                window.AppController.onNewImageRequested();
+            }
         };
     }
 
@@ -487,6 +612,7 @@ class UIController {
         document.getElementById('controlPanel').style.display = 'none';
         document.getElementById('processingPanel').style.display = 'none';
         document.getElementById('resultPanel').style.display = 'none';
+        document.body.classList.remove('modal-open');
 
         // Limpiar selección de escala
         document.querySelectorAll('.scale-btn').forEach(btn => {
@@ -580,6 +706,9 @@ class UIController {
     static hideElement(id) {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
+        if (id === 'resultPanel') {
+            document.body.classList.remove('modal-open');
+        }
     }
 
     static showElement(id) {

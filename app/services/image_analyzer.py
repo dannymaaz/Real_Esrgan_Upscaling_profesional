@@ -59,6 +59,14 @@ class ImageAnalyzer:
         # Análisis profundo de origen y condiciones
         source_info = self._check_source_integrity(image_path)
         lighting_condition = self._analyze_lighting(img)
+        restoration_signals = self._analyze_restoration_signals(
+            img=img,
+            gray=gray,
+            compression_metrics=compression_metrics,
+            pixelation_metrics=pixelation_metrics,
+            noise_level=noise_level,
+            source_info=source_info
+        )
         
         image_type = self._detect_image_type(
             img=img,
@@ -106,6 +114,15 @@ class ImageAnalyzer:
             "face_importance": face_info["importance"],
             "source_info": source_info,
             "lighting_condition": lighting_condition,
+            "filter_detected": restoration_signals["filter_detected"],
+            "filter_strength": restoration_signals["filter_strength"],
+            "is_monochrome": restoration_signals["is_monochrome"],
+            "monochrome_confidence": round(restoration_signals["monochrome_confidence"], 3),
+            "old_photo_detected": restoration_signals["old_photo_detected"],
+            "scan_artifacts_detected": restoration_signals["scan_artifacts_detected"],
+            "scratch_score": round(restoration_signals["scratch_score"], 3),
+            "recommended_filter_restoration": restoration_signals["recommended_filter_restoration"],
+            "recommended_bw_restore": restoration_signals["recommended_bw_restore"],
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
             "uniform_restore_mode": self._should_use_uniform_restore(
@@ -131,7 +148,8 @@ class ImageAnalyzer:
                 compression_metrics,
                 pixelation_metrics,
                 source_info,
-                lighting_condition
+                lighting_condition,
+                restoration_signals
             )
         }
 
@@ -175,19 +193,130 @@ class ImageAnalyzer:
 
     def _generate_detailed_notes(
         self, width, height, image_type, sharpness, noise_level, has_faces, 
-        blur, compression, pixelation, source_info, lighting
+        blur, compression, pixelation, source_info, lighting, restoration_signals=None
     ) -> list:
         """Genera notas humanas incluyendo origen y luz"""
         # Llamar al legacy para la base
         notes = self._generate_notes(width, height, image_type, sharpness, noise_level, has_faces, blur, compression, pixelation)
+        restoration_signals = restoration_signals or {}
         
         if source_info["is_likely_social_media"]:
             notes.append("Probable origen de Redes Sociales (Compresión web)")
             
         if lighting == "low_light":
             notes.append("Condiciones de baja luz: Procesamiento conservador de ruido")
-            
+
+        if restoration_signals.get("filter_detected"):
+            strength = restoration_signals.get("filter_strength", "medium")
+            notes.append(f"Filtro detectado (intensidad {strength})")
+
+        if restoration_signals.get("is_monochrome"):
+            notes.append("Imagen monocromática detectada (B/N o desaturada)")
+
+        if restoration_signals.get("old_photo_detected"):
+            notes.append("Posible foto antigua: recomendada restauración tonal")
+
+        if restoration_signals.get("scan_artifacts_detected"):
+            notes.append("Posibles artefactos de escaneo/rayones detectados")
+             
         return notes
+
+    def _analyze_restoration_signals(
+        self,
+        img: np.ndarray,
+        gray: np.ndarray,
+        compression_metrics: Dict,
+        pixelation_metrics: Dict,
+        noise_level: str,
+        source_info: Dict
+    ) -> Dict:
+        """
+        Detecta señales para restauración opcional (filtro, B/N, foto antigua/escaneo).
+        """
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        saturation = float(np.mean(hsv[:, :, 1]))
+
+        b_channel, g_channel, r_channel = cv2.split(img)
+        rg_diff = float(np.mean(np.abs(r_channel.astype(np.float32) - g_channel.astype(np.float32))))
+        rb_diff = float(np.mean(np.abs(r_channel.astype(np.float32) - b_channel.astype(np.float32))))
+        gb_diff = float(np.mean(np.abs(g_channel.astype(np.float32) - b_channel.astype(np.float32))))
+        channel_diff = (rg_diff + rb_diff + gb_diff) / 3.0
+
+        monochrome_confidence = 0.0
+        if saturation < 11:
+            monochrome_confidence += 0.65
+        elif saturation < 18:
+            monochrome_confidence += 0.45
+        if channel_diff < 5.5:
+            monochrome_confidence += 0.45
+        elif channel_diff < 9.5:
+            monochrome_confidence += 0.25
+        if source_info.get("is_likely_social_media") and saturation < 14:
+            monochrome_confidence += 0.12
+        monochrome_confidence = float(np.clip(monochrome_confidence, 0.0, 1.0))
+        is_monochrome = monochrome_confidence >= 0.6
+
+        # Heurística de rayones/escaneo: líneas finas anómalas + bajo contraste global.
+        edges = cv2.Canny(gray, 80, 180)
+        edge_pixels = float(np.count_nonzero(edges))
+        if edge_pixels > 0:
+            kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 13))
+            kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 1))
+            thin_v = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel_v)
+            thin_h = cv2.morphologyEx(edges, cv2.MORPH_OPEN, kernel_h)
+            scratch_ratio = float(np.count_nonzero(thin_v) + np.count_nonzero(thin_h)) / edge_pixels
+        else:
+            scratch_ratio = 0.0
+
+        contrast_std = float(np.std(gray))
+        compression_score = float(compression_metrics.get("compression_score", 0.0))
+        pixelation_score = float(pixelation_metrics.get("pixelation_score", 0.0))
+
+        old_photo_detected = bool(
+            (is_monochrome and contrast_std < 62)
+            or (scratch_ratio > 0.22)
+            or (contrast_std < 45 and noise_level in {"medium", "high"})
+        )
+
+        scan_artifacts_detected = bool(
+            scratch_ratio > 0.16
+            or (contrast_std < 48 and compression_score > 0.35)
+            or (source_info.get("format") in {"TIFF", "BMP"} and contrast_std < 68)
+        )
+
+        filter_score = 0.0
+        if saturation > 120:
+            filter_score += 0.55
+        elif saturation > 95:
+            filter_score += 0.35
+        if compression_score > 0.35 or pixelation_score > 0.2:
+            filter_score += 0.28
+        if source_info.get("is_likely_social_media"):
+            filter_score += 0.22
+        if old_photo_detected or scan_artifacts_detected:
+            filter_score += 0.2
+
+        filter_detected = filter_score >= 0.45 and not is_monochrome
+        if filter_score >= 0.95:
+            filter_strength = "high"
+        elif filter_score >= 0.65:
+            filter_strength = "medium"
+        elif filter_detected:
+            filter_strength = "low"
+        else:
+            filter_strength = "none"
+
+        return {
+            "filter_detected": bool(filter_detected),
+            "filter_strength": filter_strength,
+            "is_monochrome": bool(is_monochrome),
+            "monochrome_confidence": monochrome_confidence,
+            "old_photo_detected": bool(old_photo_detected),
+            "scan_artifacts_detected": bool(scan_artifacts_detected),
+            "scratch_score": float(np.clip(scratch_ratio, 0.0, 1.0)),
+            "recommended_filter_restoration": bool(filter_detected or old_photo_detected or scan_artifacts_detected),
+            "recommended_bw_restore": bool(is_monochrome)
+        }
 
     def _detect_blur(self, gray: np.ndarray) -> Dict:
         """Detecta blur usando Laplacian + Tenengrad."""

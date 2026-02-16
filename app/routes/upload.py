@@ -70,6 +70,13 @@ def _normalize_image_type_override(image_type: Optional[str]) -> Optional[str]:
     return None
 
 
+def _should_force_png_output(input_filename: str, analysis: dict) -> bool:
+    """Devuelve True cuando conviene guardar resultado como PNG."""
+    source_format = str(analysis.get("source_info", {}).get("format", "")).upper()
+    extension = Path(input_filename).suffix.lower()
+    return source_format == "WEBP" or extension == ".webp"
+
+
 @router.post("/analyze")
 async def analyze_image(file: UploadFile = File(...)):
     """
@@ -112,7 +119,10 @@ async def upscale_image(
     scale: str = Form(...),
     model: Optional[str] = Form(None),
     face_enhance: bool = Form(False),
-    forced_image_type: Optional[str] = Form(None)
+    forced_image_type: Optional[str] = Form(None),
+    remove_filter: bool = Form(False),
+    dual_output: bool = Form(False),
+    restore_bw: bool = Form(False)
 ):
     """
     Procesa upscaling de una imagen
@@ -176,8 +186,20 @@ async def upscale_image(
         effective_face_enhance = face_enhance
         cpu_fallback_note = None
 
+        can_restore_filter = bool(
+            analysis.get("recommended_filter_restoration")
+            or analysis.get("filter_detected")
+            or analysis.get("old_photo_detected")
+            or analysis.get("scan_artifacts_detected")
+        )
+        can_restore_bw = bool(analysis.get("recommended_bw_restore") or analysis.get("is_monochrome"))
+
+        effective_remove_filter = bool(remove_filter and can_restore_filter)
+        effective_restore_bw = bool(restore_bw and can_restore_bw)
+        effective_dual_output = bool(dual_output and effective_remove_filter)
+
         # Perfil de restauración para anti artefactos y sharpen por región
-        processing_profile = {
+        base_processing_profile = {
             "apply_restoration": analysis.get("apply_restoration", False),
             "uniform_restore_mode": analysis.get("uniform_restore_mode", False),
             "noise_level": analysis.get("noise_level", "low"),
@@ -185,7 +207,14 @@ async def upscale_image(
             "pixelation_score": analysis.get("pixelation_score", 0.0),
             "blur_severity": analysis.get("blur_severity", "low"),
             "lighting_condition": analysis.get("lighting_condition", "normal"),
-            "image_type": effective_image_type
+            "image_type": effective_image_type,
+            "filter_strength": analysis.get("filter_strength", "none"),
+            "is_monochrome": bool(analysis.get("is_monochrome", False)),
+            "old_photo_detected": bool(analysis.get("old_photo_detected", False)),
+            "scan_artifacts_detected": bool(analysis.get("scan_artifacts_detected", False)),
+            "safe_pre_resize": True,
+            "remove_filter": effective_remove_filter,
+            "restore_monochrome": effective_restore_bw
         }
 
         # Evitar modificación excesiva del rostro en fotos de buena calidad.
@@ -197,6 +226,8 @@ async def upscale_image(
             )
         )
         face_fidelity_mode = "balanced" if severe_face_degradation else "ultra"
+
+        output_extension = ".png" if _should_force_png_output(input_filename, analysis) else None
 
         # Plan de ejecución con fallback a 2x + resize cuando 4x falla por memoria/estabilidad.
         attempt_plan = [{
@@ -220,70 +251,161 @@ async def upscale_image(
                 seen.add(key)
                 unique_attempts.append(attempt)
 
-        # Procesar upscaling
+        variants = []
+        if effective_dual_output:
+            variants = [
+                {
+                    "key": "original_style",
+                    "label": "Escalada original",
+                    "processing_profile": {
+                        **base_processing_profile,
+                        "remove_filter": False,
+                        "restore_monochrome": False
+                    },
+                    "default": False
+                },
+                {
+                    "key": "restored_style",
+                    "label": "Escalada restaurada",
+                    "processing_profile": {
+                        **base_processing_profile,
+                        "remove_filter": effective_remove_filter,
+                        "restore_monochrome": effective_restore_bw
+                    },
+                    "default": True
+                }
+            ]
+        else:
+            variants = [
+                {
+                    "key": "single",
+                    "label": "Resultado",
+                    "processing_profile": {**base_processing_profile},
+                    "default": True
+                }
+            ]
+
+        # Procesar variante(s)
         started_at = perf_counter()
-        result = None
-        output_filename = ""
-        output_path = OUTPUTS_DIR / ""
-        last_error = None
+        variant_outputs = []
+        first_error = None
 
-        for index, attempt in enumerate(unique_attempts):
-            attempt_model_key = attempt["model_key"]
-            attempt_resize = float(attempt["resize_factor"])
-            attempt_warning = attempt["warning"]
+        for variant in variants:
+            variant_result = None
+            variant_output_filename = ""
+            variant_output_path = OUTPUTS_DIR / ""
+            variant_warning = None
+            last_variant_error = None
 
-            suffix = "_face_enhanced" if effective_face_enhance else ""
-            if attempt_resize != 1.0:
-                suffix += f"_resized_{scale}"
-            if attempt_warning:
-                suffix += "_fallback"
+            for index, attempt in enumerate(unique_attempts):
+                attempt_model_key = attempt["model_key"]
+                attempt_resize = float(attempt["resize_factor"])
+                attempt_warning = attempt["warning"]
 
-            output_filename = get_output_filename(
-                input_filename,
-                MODELS[attempt_model_key]["scale"] if attempt_resize == 1.0 else int(MODELS[attempt_model_key]["scale"] * attempt_resize),
-                MODELS[attempt_model_key]["name"] + suffix
-            )
-            output_path = OUTPUTS_DIR / output_filename
-
-            try:
-                result = await run_in_threadpool(
-                    _run_upscale_locked,
-                    input_path=input_path,
-                    output_path=output_path,
-                    model_key=attempt_model_key,
-                    face_enhance=effective_face_enhance,
-                    resize_factor=attempt_resize,
-                    processing_profile=processing_profile,
-                    face_fidelity=face_fidelity_mode
-                )
+                suffix = "_face_enhanced" if effective_face_enhance else ""
+                if attempt_resize != 1.0:
+                    suffix += f"_resized_{scale}"
                 if attempt_warning:
-                    cpu_fallback_note = attempt_warning
-                break
-            except Exception as attempt_error:
-                last_error = attempt_error
-                if index == len(unique_attempts) - 1:
-                    raise
+                    suffix += "_fallback"
+                if variant["key"] != "single":
+                    suffix += f"_{variant['key']}"
 
-        if result is None:
+                variant_output_filename = get_output_filename(
+                    input_filename,
+                    MODELS[attempt_model_key]["scale"] if attempt_resize == 1.0 else int(MODELS[attempt_model_key]["scale"] * attempt_resize),
+                    MODELS[attempt_model_key]["name"] + suffix,
+                    output_extension=output_extension
+                )
+                variant_output_path = OUTPUTS_DIR / variant_output_filename
+
+                try:
+                    variant_result = await run_in_threadpool(
+                        _run_upscale_locked,
+                        input_path=input_path,
+                        output_path=variant_output_path,
+                        model_key=attempt_model_key,
+                        face_enhance=effective_face_enhance,
+                        resize_factor=attempt_resize,
+                        processing_profile=variant["processing_profile"],
+                        face_fidelity=face_fidelity_mode
+                    )
+                    if attempt_warning:
+                        variant_warning = attempt_warning
+                    break
+                except Exception as attempt_error:
+                    last_variant_error = attempt_error
+                    if index == len(unique_attempts) - 1:
+                        if first_error is None:
+                            first_error = attempt_error
+
+            if variant_result is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error al procesar imagen: {str(last_variant_error) if last_variant_error else 'falló el procesamiento'}"
+                )
+
+            variant_outputs.append({
+                "label": variant["label"],
+                "key": variant["key"],
+                "output_filename": variant_output_filename,
+                "output_size_mb": round(get_file_size_mb(variant_output_path), 2),
+                "is_default": bool(variant["default"]),
+                "warning": variant_warning,
+                "result": variant_result
+            })
+
+            if variant_warning:
+                cpu_fallback_note = variant_warning
+
+        if not variant_outputs:
             raise HTTPException(
                 status_code=500,
-                detail=f"Error al procesar imagen: {str(last_error) if last_error else 'falló el procesamiento'}"
+                detail=f"Error al procesar imagen: {str(first_error) if first_error else 'falló el procesamiento'}"
             )
 
         elapsed_seconds = perf_counter() - started_at
-        
-        # Agregar información adicional
+
+        default_variant = next((item for item in variant_outputs if item["is_default"]), variant_outputs[0])
+        result = dict(default_variant["result"])
         result["input_filename"] = input_filename
-        result["output_filename"] = output_filename
-        result["output_size_mb"] = round(get_file_size_mb(output_path), 2)
+        result["output_filename"] = default_variant["output_filename"]
+        result["output_size_mb"] = default_variant["output_size_mb"]
+        result["output_variants"] = [
+            {
+                "label": item["label"],
+                "key": item["key"],
+                "output_filename": item["output_filename"],
+                "output_size_mb": item["output_size_mb"],
+                "is_default": item["is_default"],
+                "warning": item["warning"]
+            }
+            for item in variant_outputs
+        ]
         result["processing_time_seconds"] = round(elapsed_seconds, 2)
         result["analysis_time_seconds"] = round(analysis_elapsed_seconds, 2)
         result["total_pipeline_time_seconds"] = round(analysis_elapsed_seconds + elapsed_seconds, 2)
         result["analysis_image_type"] = analyzed_image_type
         result["effective_image_type"] = effective_image_type
+        result["requested_remove_filter"] = bool(remove_filter)
+        result["requested_restore_bw"] = bool(restore_bw)
+        result["filter_restoration_enabled"] = effective_remove_filter
+        result["bw_restoration_enabled"] = effective_restore_bw
+        result["dual_output_enabled"] = effective_dual_output
         result["type_overridden"] = bool(normalized_forced_type and normalized_forced_type != analyzed_image_type)
+        warning_parts = []
+        if result.get("face_enhance_skipped"):
+            skip_note = "Mejora facial omitida automáticamente por límite de recursos en CPU."
+            warning_parts.append(skip_note)
         if cpu_fallback_note:
-            result["processing_warning"] = cpu_fallback_note
+            warning_parts.append(cpu_fallback_note)
+        if warning_parts:
+            result["processing_warning"] = " ".join(dict.fromkeys(warning_parts))
+        if result.get("safe_pre_resize_applied"):
+            warning_text = "Modo seguro activo: se aplicó pre-redimensionado para evitar errores de memoria."
+            if result.get("processing_warning"):
+                result["processing_warning"] = f"{result['processing_warning']} {warning_text}"
+            else:
+                result["processing_warning"] = warning_text
         
         # Limpiar archivos antiguos en segundo plano
         cleanup_old_files(UPLOADS_DIR)

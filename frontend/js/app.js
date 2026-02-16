@@ -5,6 +5,8 @@
 
 const MAX_QUEUE_ITEMS = 30;
 const MAX_HISTORY_ITEMS = 40;
+const MAX_VISIBLE_QUEUE_ITEMS = 10;
+const MAX_VISIBLE_HISTORY_ITEMS = 10;
 
 // Estado de sesión (en memoria, se limpia al reiniciar la app)
 const jobs = new Map();
@@ -14,6 +16,9 @@ const historyItems = [];
 
 let selectedJobId = null;
 let isQueueWorkerRunning = false;
+let showAllQueueItems = false;
+let showAllHistoryItems = false;
+let notificationPermissionRequested = false;
 
 let currentFile = null;
 let currentAnalysis = null;
@@ -26,9 +31,39 @@ window.AppController = {
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeEventListeners();
+    initializeAnimatedPanels();
     renderQueuePanel();
     renderHistoryPanel();
 });
+
+function initializeAnimatedPanels() {
+    ['controlPanel', 'queuePanel', 'historyPanel'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.add('panel-fade');
+    });
+}
+
+function setPanelVisibility(panelId, visible) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+
+    panel.classList.add('panel-fade');
+    if (visible) {
+        panel.style.display = 'block';
+        requestAnimationFrame(() => {
+            panel.classList.remove('is-hidden');
+        });
+        return;
+    }
+
+    panel.classList.add('is-hidden');
+    setTimeout(() => {
+        if (panel.classList.contains('is-hidden')) {
+            panel.style.display = 'none';
+        }
+    }, 220);
+}
 
 function initializeEventListeners() {
     const dropzone = document.getElementById('dropzone');
@@ -40,6 +75,14 @@ function initializeEventListeners() {
     const historyList = document.getElementById('historyList');
     const clearQueueBtn = document.getElementById('clearQueueBtn');
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+    const toggleQueueViewBtn = document.getElementById('toggleQueueViewBtn');
+    const toggleHistoryViewBtn = document.getElementById('toggleHistoryViewBtn');
+    const removeFilterBtn = document.getElementById('removeFilterBtn');
+    const dualOutputContainer = document.getElementById('dualOutputContainer');
+    const dualOutputBtn = document.getElementById('dualOutputBtn');
+    const bwRestoreBtn = document.getElementById('bwRestoreBtn');
+    const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
+    const imageTypeOverrideBtn = document.getElementById('imageTypeOverrideBtn');
 
     dropzone.addEventListener('click', () => fileInput.click());
 
@@ -89,6 +132,92 @@ function initializeEventListeners() {
 
     clearQueueBtn.addEventListener('click', clearPendingQueue);
     clearHistoryBtn.addEventListener('click', clearHistory);
+
+    if (toggleQueueViewBtn) {
+        toggleQueueViewBtn.addEventListener('click', () => {
+            showAllQueueItems = !showAllQueueItems;
+            renderQueuePanel();
+        });
+    }
+
+    if (toggleHistoryViewBtn) {
+        toggleHistoryViewBtn.addEventListener('click', () => {
+            showAllHistoryItems = !showAllHistoryItems;
+            renderHistoryPanel();
+        });
+    }
+
+    if (removeFilterBtn && dualOutputContainer) {
+        removeFilterBtn.addEventListener('change', () => {
+            dualOutputContainer.style.display = removeFilterBtn.checked ? 'block' : 'none';
+            const dualOutputBtn = document.getElementById('dualOutputBtn');
+            if (!removeFilterBtn.checked && dualOutputBtn) {
+                dualOutputBtn.checked = false;
+            }
+
+            const selected = getSelectedJob();
+            if (selected) {
+                selected.options.removeFilter = Boolean(removeFilterBtn.checked);
+                if (!selected.options.removeFilter) {
+                    selected.options.dualOutput = false;
+                }
+                jobs.set(selected.id, selected);
+                renderQueuePanel();
+            }
+        });
+    }
+
+    if (dualOutputBtn) {
+        dualOutputBtn.addEventListener('change', () => {
+            const selected = getSelectedJob();
+            if (!selected) return;
+            selected.options.dualOutput = Boolean(dualOutputBtn.checked && selected.options.removeFilter);
+            selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
+            jobs.set(selected.id, selected);
+            renderQueuePanel();
+        });
+    }
+
+    if (bwRestoreBtn) {
+        bwRestoreBtn.addEventListener('change', () => {
+            const selected = getSelectedJob();
+            if (!selected) return;
+            selected.options.restoreMonochrome = Boolean(bwRestoreBtn.checked);
+            selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
+            jobs.set(selected.id, selected);
+            renderQueuePanel();
+        });
+    }
+
+    if (faceEnhanceBtn) {
+        faceEnhanceBtn.addEventListener('change', () => {
+            const selected = getSelectedJob();
+            if (!selected) return;
+            selected.options.faceEnhance = Boolean(faceEnhanceBtn.checked);
+            selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
+            jobs.set(selected.id, selected);
+            renderQueuePanel();
+        });
+    }
+
+    if (imageTypeOverrideBtn) {
+        imageTypeOverrideBtn.addEventListener('change', () => {
+            const selected = getSelectedJob();
+            if (!selected) return;
+            selected.options.forcedImageType = getForcedImageTypeFromUI(selected.analysis);
+            jobs.set(selected.id, selected);
+            renderQueuePanel();
+        });
+    }
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            const resultPanel = document.getElementById('resultPanel');
+            if (resultPanel && resultPanel.style.display !== 'none') {
+                handleReturnToEditor();
+            }
+        }
+    });
 }
 
 function getSelectedJob() {
@@ -106,6 +235,52 @@ function formatError(error, fallbackMessage) {
         return 'No se pudo conectar con el servidor. Verifica que el backend siga activo en http://127.0.0.1:8000';
     }
     return message || fallbackMessage;
+}
+
+function formatDurationShort(seconds) {
+    const total = Math.max(0, Number(seconds) || 0);
+    if (total < 60) {
+        const rounded = Math.round(total);
+        return `${Math.max(1, rounded)} s`;
+    }
+
+    const minutes = Math.floor(total / 60);
+    const remainder = Math.round(total % 60);
+    if (remainder === 0) {
+        return `${minutes} min`;
+    }
+    return `${minutes} min ${remainder} s`;
+}
+
+function estimateDurationSeconds(analysis, options) {
+    const megapixels = Number(analysis?.megapixels || 1);
+    const requestedScale = options?.scale === '4x' ? 4 : 2;
+    const base = requestedScale === 4 ? 16 : 7;
+    let estimate = base + (megapixels * (requestedScale === 4 ? 13 : 7));
+
+    if (options?.faceEnhance) {
+        estimate *= 1.15;
+    }
+    if (options?.removeFilter) {
+        estimate *= 1.18;
+    }
+    if (options?.restoreMonochrome) {
+        estimate *= 1.22;
+    }
+    if (options?.dualOutput && options?.removeFilter) {
+        estimate *= 1.95;
+    }
+
+    return Math.max(8, Math.round(estimate));
+}
+
+function updateJobProgress(job, elapsedSeconds) {
+    const estimate = Math.max(8, Number(job.estimatedDurationSec || 20));
+    const ratio = Math.max(0, Math.min(0.94, elapsedSeconds / estimate));
+    const eased = 1 - Math.pow(1 - ratio, 1.6);
+    job.progress = Math.round(eased * 100);
+    const remaining = Math.max(0, estimate - elapsedSeconds);
+    job.progressMessage = `ETA aprox: ${formatDurationShort(remaining)}`;
 }
 
 function validateFile(file) {
@@ -152,13 +327,20 @@ async function handleFileSelect(file) {
             createdAt: Date.now(),
             updatedAt: Date.now(),
             status: 'ready',
+            progress: 0,
+            progressMessage: 'Lista para encolar',
+            startedAt: null,
+            estimatedDurationSec: estimateDurationSeconds(analysis, { scale: `${analysis.recommended_scale}x`, faceEnhance: false, removeFilter: false, dualOutput: false, restoreMonochrome: false }),
             analysis,
             result: null,
             error: null,
             options: {
                 scale: `${analysis.recommended_scale}x`,
                 faceEnhance: false,
-                forcedImageType: null
+                forcedImageType: null,
+                removeFilter: false,
+                dualOutput: false,
+                restoreMonochrome: false
             }
         };
 
@@ -171,18 +353,45 @@ async function handleFileSelect(file) {
     }
 }
 
-function applyJobControls(job) {
+function applyJobControls(job, showPanel = true) {
     currentFile = job.file;
     currentAnalysis = job.analysis;
     selectedScale = job.options.scale;
     window.currentFile = job.file;
 
-    UIController.showControlPanel(job.analysis);
+    if (showPanel) {
+        UIController.showControlPanel(job.analysis);
+    }
     setActiveScaleButton(job.options.scale);
 
     const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
     if (faceEnhanceBtn) {
         faceEnhanceBtn.checked = Boolean(job.options.faceEnhance);
+    }
+
+    const removeFilterBtn = document.getElementById('removeFilterBtn');
+    const filterRestoreContainer = document.getElementById('filterRestoreContainer');
+    const dualOutputContainer = document.getElementById('dualOutputContainer');
+    const dualOutputBtn = document.getElementById('dualOutputBtn');
+    const bwRestoreContainer = document.getElementById('bwRestoreContainer');
+    const bwRestoreBtn = document.getElementById('bwRestoreBtn');
+
+    const canRestoreFilter = Boolean(job.analysis.filter_detected || job.analysis.old_photo_detected || job.analysis.scan_artifacts_detected);
+    const canRestoreBw = Boolean(job.analysis.is_monochrome);
+
+    if (filterRestoreContainer && removeFilterBtn) {
+        filterRestoreContainer.style.display = canRestoreFilter ? 'block' : 'none';
+        removeFilterBtn.checked = canRestoreFilter && Boolean(job.options.removeFilter);
+    }
+
+    if (dualOutputContainer && dualOutputBtn) {
+        dualOutputContainer.style.display = canRestoreFilter && Boolean(job.options.removeFilter) ? 'block' : 'none';
+        dualOutputBtn.checked = canRestoreFilter && Boolean(job.options.removeFilter) && Boolean(job.options.dualOutput);
+    }
+
+    if (bwRestoreContainer && bwRestoreBtn) {
+        bwRestoreContainer.style.display = canRestoreBw ? 'block' : 'none';
+        bwRestoreBtn.checked = canRestoreBw && Boolean(job.options.restoreMonochrome);
     }
 
     const overrideContainer = document.getElementById('imageTypeOverrideContainer');
@@ -197,7 +406,13 @@ function selectJob(jobId) {
     if (!job) return;
 
     selectedJobId = job.id;
-    applyJobControls(job);
+    const shouldShowPanel = job.status === 'ready' || job.status === 'failed';
+    applyJobControls(job, shouldShowPanel);
+    if (job.status === 'ready' || job.status === 'failed') {
+        setPanelVisibility('controlPanel', true);
+    } else {
+        setPanelVisibility('controlPanel', false);
+    }
     renderQueuePanel();
 }
 
@@ -231,10 +446,17 @@ function syncSelectedJobOptionsFromUI() {
 
     const activeScaleBtn = document.querySelector('.scale-btn.active');
     const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
+    const removeFilterBtn = document.getElementById('removeFilterBtn');
+    const dualOutputBtn = document.getElementById('dualOutputBtn');
+    const bwRestoreBtn = document.getElementById('bwRestoreBtn');
 
     job.options.scale = activeScaleBtn ? activeScaleBtn.dataset.scale : job.options.scale;
     job.options.faceEnhance = Boolean(faceEnhanceBtn && faceEnhanceBtn.checked);
     job.options.forcedImageType = getForcedImageTypeFromUI(job.analysis);
+    job.options.removeFilter = Boolean(removeFilterBtn && removeFilterBtn.checked);
+    job.options.dualOutput = Boolean(dualOutputBtn && dualOutputBtn.checked && job.options.removeFilter);
+    job.options.restoreMonochrome = Boolean(bwRestoreBtn && bwRestoreBtn.checked && job.analysis?.is_monochrome);
+    job.estimatedDurationSec = estimateDurationSeconds(job.analysis, job.options);
     job.updatedAt = Date.now();
 
     jobs.set(job.id, job);
@@ -256,6 +478,9 @@ function enqueueSelectedJob() {
 
     job.status = 'queued';
     job.error = null;
+    job.progress = 0;
+    job.progressMessage = 'Esperando turno';
+    job.estimatedDurationSec = estimateDurationSeconds(job.analysis, job.options);
     job.updatedAt = Date.now();
     jobs.set(job.id, job);
 
@@ -263,6 +488,8 @@ function enqueueSelectedJob() {
         processQueue.push(job.id);
     }
 
+    setPanelVisibility('controlPanel', false);
+    ensureNotificationPermission();
     renderQueuePanel();
     runQueueWorker();
 }
@@ -280,9 +507,26 @@ async function runQueueWorker() {
 
         job.status = 'processing';
         job.error = null;
+        job.progress = Math.max(2, job.progress || 0);
+        job.progressMessage = 'Preparando procesamiento...';
+        job.startedAt = Date.now();
         job.updatedAt = Date.now();
         jobs.set(job.id, job);
         renderQueuePanel();
+
+        let progressTimer = window.setInterval(() => {
+            const current = jobs.get(job.id);
+            if (!current || current.status !== 'processing') {
+                clearInterval(progressTimer);
+                return;
+            }
+
+            const elapsedSec = (Date.now() - Number(current.startedAt || Date.now())) / 1000;
+            updateJobProgress(current, elapsedSec);
+            current.updatedAt = Date.now();
+            jobs.set(current.id, current);
+            renderQueuePanel();
+        }, 350);
 
         try {
             const effectiveImageType = job.options.forcedImageType || job.analysis.image_type;
@@ -296,22 +540,35 @@ async function runQueueWorker() {
                 job.options.scale,
                 modelToSend,
                 job.options.faceEnhance,
-                job.options.forcedImageType
+                job.options.forcedImageType,
+                {
+                    removeFilter: job.options.removeFilter,
+                    dualOutput: job.options.dualOutput,
+                    restoreMonochrome: job.options.restoreMonochrome
+                }
             );
+
+            clearInterval(progressTimer);
 
             job.status = 'done';
             job.result = result;
+            job.progress = 100;
+            job.progressMessage = 'Completado';
             job.updatedAt = Date.now();
             jobs.set(job.id, job);
 
             pushHistory(job);
+            notifyJobCompleted(job);
 
             if (selectedJobId === job.id) {
                 showResultForJob(job);
             }
         } catch (error) {
+            clearInterval(progressTimer);
             job.status = 'failed';
             job.error = formatError(error, 'Error desconocido al procesar imagen');
+            job.progress = 100;
+            job.progressMessage = 'Finalizado con error';
             job.updatedAt = Date.now();
             jobs.set(job.id, job);
 
@@ -388,6 +645,9 @@ function retryJob(jobId) {
 
     job.status = 'queued';
     job.error = null;
+    job.progress = 0;
+    job.progressMessage = 'Esperando turno';
+    job.estimatedDurationSec = estimateDurationSeconds(job.analysis, job.options);
     job.updatedAt = Date.now();
     jobs.set(job.id, job);
 
@@ -405,12 +665,38 @@ function clearPendingQueue() {
         if (!job) continue;
         if (job.status === 'queued') {
             job.status = 'ready';
+            job.progress = 0;
+            job.progressMessage = 'Lista para encolar';
             job.updatedAt = Date.now();
             jobs.set(job.id, job);
         }
     }
     processQueue.length = 0;
+    showAllQueueItems = false;
     renderQueuePanel();
+}
+
+function pruneQueueBacklog() {
+    const keepLimit = MAX_QUEUE_ITEMS;
+    if (jobOrder.length <= keepLimit) {
+        return;
+    }
+
+    const removableIds = jobOrder.filter((jobId) => {
+        const job = jobs.get(jobId);
+        if (!job) return false;
+        if (job.id === selectedJobId) return false;
+        return job.status === 'done' || job.status === 'failed';
+    });
+
+    while (jobOrder.length > keepLimit && removableIds.length > 0) {
+        const targetId = removableIds.shift();
+        const orderIndex = jobOrder.indexOf(targetId);
+        if (orderIndex >= 0) {
+            jobOrder.splice(orderIndex, 1);
+        }
+        jobs.delete(targetId);
+    }
 }
 
 function pushHistory(job) {
@@ -425,6 +711,7 @@ function pushHistory(job) {
         outputFilename: job.result?.output_filename,
         model: job.result?.model_used,
         scale: job.result?.scale,
+        variantCount: Array.isArray(job.result?.output_variants) ? job.result.output_variants.length : 1,
         processedAt: Date.now()
     });
 
@@ -432,11 +719,13 @@ function pushHistory(job) {
         historyItems.length = MAX_HISTORY_ITEMS;
     }
 
+    pruneQueueBacklog();
     renderHistoryPanel();
 }
 
 function clearHistory() {
     historyItems.length = 0;
+    showAllHistoryItems = false;
     renderHistoryPanel();
 }
 
@@ -475,37 +764,46 @@ function renderQueuePanel() {
     const queuePanel = document.getElementById('queuePanel');
     const queueSummary = document.getElementById('queueSummary');
     const queueList = document.getElementById('queueList');
+    const toggleQueueViewBtn = document.getElementById('toggleQueueViewBtn');
 
     if (jobOrder.length === 0) {
-        queuePanel.style.display = 'none';
+        setPanelVisibility('queuePanel', false);
         queueList.innerHTML = '';
+        if (toggleQueueViewBtn) toggleQueueViewBtn.style.display = 'none';
         return;
     }
 
-    queuePanel.style.display = 'block';
+    setPanelVisibility('queuePanel', true);
 
     const queuedCount = [...jobs.values()].filter((job) => job.status === 'queued').length;
     const processingCount = [...jobs.values()].filter((job) => job.status === 'processing').length;
     const doneCount = [...jobs.values()].filter((job) => job.status === 'done').length;
+    const failedCount = [...jobs.values()].filter((job) => job.status === 'failed').length;
 
-    queueSummary.textContent = `Total: ${jobOrder.length} · En cola: ${queuedCount} · Procesando: ${processingCount} · Completadas: ${doneCount}`;
+    const hiddenCount = Math.max(0, jobOrder.length - MAX_VISIBLE_QUEUE_ITEMS);
+    queueSummary.textContent = `Total: ${jobOrder.length} · En cola: ${queuedCount} · Procesando: ${processingCount} · Completadas: ${doneCount} · Errores: ${failedCount}`;
 
-    queueList.innerHTML = jobOrder
-        .slice()
-        .reverse()
+    if (toggleQueueViewBtn) {
+        toggleQueueViewBtn.style.display = hiddenCount > 0 ? 'inline-flex' : 'none';
+        toggleQueueViewBtn.textContent = showAllQueueItems ? 'Ver menos' : `Ver más (${hiddenCount})`;
+    }
+
+    const orderedJobIds = jobOrder.slice().reverse();
+    const visibleJobIds = showAllQueueItems ? orderedJobIds : orderedJobIds.slice(0, MAX_VISIBLE_QUEUE_ITEMS);
+
+    queueList.innerHTML = visibleJobIds
         .map((jobId) => {
             const job = jobs.get(jobId);
             if (!job) return '';
 
             const isActive = selectedJobId === job.id;
             const dimensions = `${job.analysis.width}x${job.analysis.height}`;
-            const optionMeta = `${job.options.scale} · Rostro ${job.options.faceEnhance ? 'ON' : 'OFF'}`;
+            const optionMeta = `${job.options.scale} · Rostro ${job.options.faceEnhance ? 'ON' : 'OFF'}${job.options.removeFilter ? ' · Filtro OFF' : ''}${job.options.restoreMonochrome ? ' · B/N restore' : ''}${job.options.dualOutput ? ' · Doble salida' : ''}`;
 
             const actionButtons = [];
             actionButtons.push(`<button class="mini-btn" data-action="select" data-job-id="${job.id}">Abrir</button>`);
 
             if (job.status === 'done') {
-                actionButtons.push(`<button class="mini-btn" data-action="view" data-job-id="${job.id}">Ver</button>`);
                 actionButtons.push(`<button class="mini-btn" data-action="download" data-job-id="${job.id}">Descargar</button>`);
                 actionButtons.push(`<button class="mini-btn" data-action="retry" data-job-id="${job.id}">Reprocesar</button>`);
             } else if (job.status === 'failed') {
@@ -522,6 +820,19 @@ function renderQueuePanel() {
                 ? `<div class="queue-item-meta" style="color:hsl(355,100%,82%);margin-top:0.35rem;">${escapeHtml(job.error)}</div>`
                 : '';
 
+            const progressValue = Math.max(0, Math.min(100, Number(job.progress || 0)));
+            const progressLine = `
+                <div class="queue-progress">
+                    <div class="queue-progress-meta">
+                        <span>${escapeHtml(job.progressMessage || statusLabel(job.status))}</span>
+                        <span>${progressValue}%</span>
+                    </div>
+                    <div class="queue-progress-bar">
+                        <div class="queue-progress-fill" style="width:${progressValue}%"></div>
+                    </div>
+                </div>
+            `;
+
             return `
                 <article class="queue-item ${isActive ? 'active' : ''}">
                     <div class="queue-item-head">
@@ -529,6 +840,7 @@ function renderQueuePanel() {
                         <span class="status-badge status-${job.status}">${statusLabel(job.status)}</span>
                     </div>
                     <div class="queue-item-meta">${dimensions} · ${escapeHtml(optionMeta)}</div>
+                    ${progressLine}
                     ${errorLine}
                     <div class="queue-actions">${actionButtons.join('')}</div>
                 </article>
@@ -541,24 +853,35 @@ function renderHistoryPanel() {
     const historyPanel = document.getElementById('historyPanel');
     const historySummary = document.getElementById('historySummary');
     const historyList = document.getElementById('historyList');
+    const toggleHistoryViewBtn = document.getElementById('toggleHistoryViewBtn');
 
     if (historyItems.length === 0) {
-        historyPanel.style.display = 'none';
+        setPanelVisibility('historyPanel', false);
         historyList.innerHTML = '';
+        if (toggleHistoryViewBtn) toggleHistoryViewBtn.style.display = 'none';
         return;
     }
 
-    historyPanel.style.display = 'block';
+    setPanelVisibility('historyPanel', true);
+
+    const hiddenCount = Math.max(0, historyItems.length - MAX_VISIBLE_HISTORY_ITEMS);
     historySummary.textContent = `${historyItems.length} resultado(s) en esta sesión.`;
 
-    historyList.innerHTML = historyItems
+    if (toggleHistoryViewBtn) {
+        toggleHistoryViewBtn.style.display = hiddenCount > 0 ? 'inline-flex' : 'none';
+        toggleHistoryViewBtn.textContent = showAllHistoryItems ? 'Ver menos' : `Ver más (${hiddenCount})`;
+    }
+
+    const visibleHistory = showAllHistoryItems ? historyItems : historyItems.slice(0, MAX_VISIBLE_HISTORY_ITEMS);
+
+    historyList.innerHTML = visibleHistory
         .map((item) => `
             <article class="history-item">
                 <div class="history-item-head">
                     <div class="history-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
                     <span class="status-badge status-done">Listo</span>
                 </div>
-                <div class="history-item-meta">${escapeHtml(item.model || '-')} · ${escapeHtml(String(item.scale || '-'))}x · ${escapeHtml(formatTimestamp(item.processedAt))}</div>
+                <div class="history-item-meta">${escapeHtml(item.model || '-')} · ${escapeHtml(String(item.scale || '-'))}x · ${escapeHtml(formatTimestamp(item.processedAt))}${item.variantCount > 1 ? ` · ${item.variantCount} versiones` : ''}</div>
                 <div class="history-actions">
                     <button class="mini-btn" data-action="history-view" data-job-id="${item.jobId}">Ver</button>
                     <button class="mini-btn" data-action="history-download" data-job-id="${item.jobId}">Descargar</button>
@@ -595,6 +918,9 @@ function handleQueueActionClick(event) {
     switch (action) {
         case 'select':
             selectJob(jobId);
+            if (job.status === 'done') {
+                showResultForJob(job);
+            }
             break;
         case 'enqueue':
             selectJob(jobId);
@@ -656,15 +982,94 @@ function handleHistoryActionClick(event) {
 
 function handleReturnToEditor() {
     UIController.hideElement('resultPanel');
-    const selected = getSelectedJob();
-    if (selected) {
-        applyJobControls(selected);
+    document.body.classList.remove('modal-open');
+    setPanelVisibility('controlPanel', false);
+}
+
+async function ensureNotificationPermission() {
+    if (!('Notification' in window)) {
         return;
     }
 
-    const fallbackId = jobOrder[jobOrder.length - 1] || null;
-    if (fallbackId) {
-        selectJob(fallbackId);
+    if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+        return;
+    }
+
+    if (notificationPermissionRequested) {
+        return;
+    }
+
+    notificationPermissionRequested = true;
+    try {
+        await Notification.requestPermission();
+    } catch (_) {
+        // Ignorar si el navegador bloquea el prompt.
+    }
+}
+
+function playCompletionTone() {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+
+    try {
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+
+        const oscA = ctx.createOscillator();
+        const gainA = ctx.createGain();
+        oscA.type = 'sine';
+        oscA.frequency.value = 660;
+        gainA.gain.setValueAtTime(0.0001, now);
+        gainA.gain.exponentialRampToValueAtTime(0.05, now + 0.02);
+        gainA.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+        oscA.connect(gainA).connect(ctx.destination);
+        oscA.start(now);
+        oscA.stop(now + 0.22);
+
+        const oscB = ctx.createOscillator();
+        const gainB = ctx.createGain();
+        oscB.type = 'sine';
+        oscB.frequency.value = 880;
+        gainB.gain.setValueAtTime(0.0001, now + 0.1);
+        gainB.gain.exponentialRampToValueAtTime(0.04, now + 0.12);
+        gainB.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+        oscB.connect(gainB).connect(ctx.destination);
+        oscB.start(now + 0.1);
+        oscB.stop(now + 0.32);
+
+        setTimeout(() => {
+            ctx.close().catch(() => {});
+        }, 450);
+    } catch (_) {
+        // Ignorar fallos de audio en navegadores restringidos.
+    }
+}
+
+function notifyJobCompleted(job) {
+    playCompletionTone();
+
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+        return;
+    }
+
+    const title = 'Imagen procesada';
+    const body = `${job.file?.name || 'Imagen'} lista para revisar`;
+
+    try {
+        const notification = new Notification(title, {
+            body,
+            tag: job.id,
+            renotify: true
+        });
+
+        notification.onclick = () => {
+            window.focus();
+            selectJob(job.id);
+            showResultForJob(job);
+            notification.close();
+        };
+    } catch (_) {
+        // Ignorar si el sistema bloquea notificaciones.
     }
 }
 

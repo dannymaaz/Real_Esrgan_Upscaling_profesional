@@ -83,8 +83,10 @@ async def save_upload_file(upload_file: UploadFile) -> Tuple[str, Path]:
         f"Formatos soportados: {supported_formats_text}."
     )
 
+    original_filename = (upload_file.filename or "upload_image").strip() or "upload_image"
+
     # Validar extensión
-    if not is_allowed_file(upload_file.filename):
+    if not is_allowed_file(original_filename):
         raise HTTPException(
             status_code=400,
             detail=unsupported_message
@@ -99,7 +101,7 @@ async def save_upload_file(upload_file: UploadFile) -> Tuple[str, Path]:
         )
     
     # Generar nombre único
-    filename = generate_unique_filename(upload_file.filename)
+    filename = generate_unique_filename(original_filename)
     file_path = UPLOADS_DIR / filename
     
     # Guardar archivo con validación de tamaño
@@ -127,7 +129,7 @@ async def save_upload_file(upload_file: UploadFile) -> Tuple[str, Path]:
     return filename, file_path
 
 
-def get_output_filename(input_filename: str, scale: int, model_type: str = "") -> str:
+def get_output_filename(input_filename: str, scale: int, model_type: str = "", output_extension: Optional[str] = None) -> str:
     """
     Genera el nombre del archivo de salida basado en el archivo de entrada
     
@@ -135,12 +137,15 @@ def get_output_filename(input_filename: str, scale: int, model_type: str = "") -
         input_filename: Nombre del archivo de entrada
         scale: Factor de escala (2, 4, etc.)
         model_type: Tipo de modelo usado (opcional)
+        output_extension: Extensión de salida forzada (opcional, ej: '.png')
         
     Returns:
         Nombre del archivo de salida
     """
     stem = Path(input_filename).stem
-    extension = get_file_extension(input_filename)
+    extension = (output_extension or get_file_extension(input_filename)).lower()
+    if not extension.startswith('.'):
+        extension = f".{extension}"
     
     # Agregar sufijo con escala y tipo de modelo
     suffix = f"_x{scale}"
