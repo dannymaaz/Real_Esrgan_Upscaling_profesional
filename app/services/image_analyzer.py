@@ -239,7 +239,7 @@ class ImageAnalyzer:
             notes.append(f"Posible filtro de color social/teléfono (intensidad {strength})")
 
         if restoration_signals.get("degraded_social_portrait"):
-            notes.append("Retrato social degradado detectado: se sugiere corrección de color")
+            notes.append("Foto social degradada detectada: se sugiere perfil de rescate")
 
         if restoration_signals.get("is_monochrome"):
             notes.append("Imagen monocromática detectada (B/N o desaturada)")
@@ -301,7 +301,18 @@ class ImageAnalyzer:
             return {
                 "key": "social_portrait_rescue",
                 "strength": "high",
-                "reason": "Retrato social degradado (compresión + cast + blur)"
+                "reason": "Foto social degradada (compresión + cast + blur)"
+            }
+
+        if source_info.get("is_likely_social_media", False) and (
+            compression_score > 0.42
+            or pixelation_score > 0.22
+            or blur_severity == "strong"
+        ):
+            return {
+                "key": "artifact_rescue_general",
+                "strength": "high",
+                "reason": "Compresión/pixelado social severo"
             }
 
         if restoration_signals.get("social_color_filter_detected"):
@@ -344,8 +355,8 @@ class ImageAnalyzer:
             image_type == "photo"
             and blur_severity == "low"
             and noise_level == "low"
-            and compression_score < 0.28
-            and pixelation_score < 0.2
+            and compression_score < 0.22
+            and pixelation_score < 0.14
             and not source_info.get("is_likely_social_media", False)
         ):
             return {
@@ -450,10 +461,22 @@ class ImageAnalyzer:
         if saturation > 80:
             social_filter_score += 0.15
 
+        social_degradation_core = (
+            compression_score > 0.32
+            or pixelation_score > 0.18
+            or blur_severity in {"medium", "strong"}
+        )
+        social_signature = (
+            magenta_cast > 0.04
+            or warm_cast > 0.05
+            or highlight_clip_ratio > 0.03
+            or saturation > 95
+        )
+
         degraded_social_portrait = bool(
-            has_relevant_faces
-            and (compression_score > 0.34 or pixelation_score > 0.2 or blur_severity in {"medium", "strong"})
-            and (magenta_cast > 0.04 or warm_cast > 0.05 or highlight_clip_ratio > 0.03)
+            social_degradation_core
+            and social_signature
+            and (has_relevant_faces or source_info.get("is_likely_social_media", False))
         )
         if degraded_social_portrait:
             social_filter_score += 0.2
