@@ -96,6 +96,8 @@
                         </div>
                     </div>
 
+                    <div class="processing-options-grid">
+
                     <!-- Face Enhance Option -->
                     <div class="processing-options">
                         <label class="checkbox-container" id="faceEnhanceContainer">
@@ -140,6 +142,7 @@
                             <span class="label-text">Generar doble salida (comparar)</span>
                         </label>
                         <p class="option-description">Creará versión con y sin restauración. Tarda más tiempo.</p>
+                        <p id="dualOutputWarning" class="option-warning" style="display: none;">Activado: se generarán 2 resultados, por eso tardará más.</p>
                     </div>
 
                     <div class="processing-options" id="bwRestoreContainer" style="display: none;">
@@ -149,6 +152,8 @@
                             <span class="label-text">Restaurar foto en blanco y negro</span>
                         </label>
                         <p class="option-description">Modo experimental para recuperar color de forma natural.</p>
+                    </div>
+
                     </div>
 
 
@@ -340,9 +345,9 @@
     </div>
 
     <!-- Scripts -->
-    <script src="/js/api-client.js?v=20260216a"></script>
-    <script src="/js/ui-controller.js?v=20260216a"></script>
-    <script src="/js/app.js?v=20260216a"></script>
+    <script src="/js/api-client.js?v=20260216b"></script>
+    <script src="/js/ui-controller.js?v=20260216b"></script>
+    <script src="/js/app.js?v=20260216b"></script>
 </body>
 
 </html>

@@ -170,6 +170,8 @@ function initializeEventListeners() {
             } else {
                 refreshDualOutputVisibilityForJob(null);
             }
+
+            refreshOptionCardsState();
         });
     }
 
@@ -189,6 +191,7 @@ function initializeEventListeners() {
             jobs.set(selected.id, selected);
             refreshDualOutputVisibilityForJob(selected);
             renderQueuePanel();
+            refreshOptionCardsState();
         });
     }
 
@@ -202,6 +205,8 @@ function initializeEventListeners() {
             );
             selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
             jobs.set(selected.id, selected);
+            refreshDualOutputWarning(selected);
+            refreshOptionCardsState();
             renderQueuePanel();
         });
     }
@@ -218,6 +223,7 @@ function initializeEventListeners() {
             jobs.set(selected.id, selected);
             refreshDualOutputVisibilityForJob(selected);
             renderQueuePanel();
+            refreshOptionCardsState();
         });
     }
 
@@ -229,6 +235,7 @@ function initializeEventListeners() {
             selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
             jobs.set(selected.id, selected);
             renderQueuePanel();
+            refreshOptionCardsState();
         });
     }
 
@@ -239,6 +246,7 @@ function initializeEventListeners() {
             selected.options.forcedImageType = getForcedImageTypeFromUI(selected.analysis);
             jobs.set(selected.id, selected);
             renderQueuePanel();
+            refreshOptionCardsState();
         });
     }
 
@@ -280,6 +288,8 @@ function initializeEventListeners() {
             }
         }
     });
+
+    refreshOptionCardsState();
 }
 
 function getSelectedJob() {
@@ -350,12 +360,16 @@ function estimateDurationSeconds(analysis, options) {
 }
 
 function updateJobProgress(job, elapsedSeconds) {
+    const previousProgress = Number(job.progress || 0);
+    const previousMessage = String(job.progressMessage || '');
     const estimate = Math.max(8, Number(job.estimatedDurationSec || 20));
     const ratio = Math.max(0, Math.min(0.94, elapsedSeconds / estimate));
     const eased = 1 - Math.pow(1 - ratio, 1.6);
     job.progress = Math.round(eased * 100);
     const remaining = Math.max(0, estimate - elapsedSeconds);
     job.progressMessage = `ETA aprox: ${formatDurationShort(remaining)}`;
+
+    return previousProgress !== job.progress || previousMessage !== job.progressMessage;
 }
 
 function refreshDualOutputVisibilityForJob(job) {
@@ -368,6 +382,46 @@ function refreshDualOutputVisibilityForJob(job) {
     if (!canEnableDual) {
         dualOutputBtn.checked = false;
     }
+
+    refreshDualOutputWarning(job);
+    refreshOptionCardsState();
+}
+
+function refreshDualOutputWarning(job = null) {
+    const dualOutputBtn = document.getElementById('dualOutputBtn');
+    const dualOutputWarning = document.getElementById('dualOutputWarning');
+    if (!dualOutputBtn || !dualOutputWarning) return;
+
+    if (!dualOutputBtn.checked) {
+        dualOutputWarning.style.display = 'none';
+        return;
+    }
+
+    let warningText = 'Activado: se generarán 2 resultados, por eso tardará más.';
+    if (job && job.analysis && job.options) {
+        const singleEstimate = estimateDurationSeconds(job.analysis, {
+            ...job.options,
+            dualOutput: false
+        });
+        const dualEstimate = estimateDurationSeconds(job.analysis, {
+            ...job.options,
+            dualOutput: true
+        });
+        const extraSeconds = Math.max(0, dualEstimate - singleEstimate);
+        if (extraSeconds > 0) {
+            warningText = `Activado: se generarán 2 resultados (+${formatDurationShort(extraSeconds)} aprox).`;
+        }
+    }
+
+    dualOutputWarning.textContent = warningText;
+    dualOutputWarning.style.display = 'block';
+}
+
+function refreshOptionCardsState() {
+    document.querySelectorAll('.processing-options').forEach((card) => {
+        const checkbox = card.querySelector('input[type="checkbox"]');
+        card.classList.toggle('is-checked', Boolean(checkbox && checkbox.checked));
+    });
 }
 
 function validateFile(file) {
@@ -509,6 +563,9 @@ function applyJobControls(job, showPanel = true) {
     if (overrideContainer && overrideBtn && overrideContainer.style.display !== 'none') {
         overrideBtn.checked = Boolean(job.options.forcedImageType);
     }
+
+    refreshDualOutputWarning(job);
+    refreshOptionCardsState();
 }
 
 function selectJob(jobId) {
@@ -577,6 +634,8 @@ function syncSelectedJobOptionsFromUI() {
 
     jobs.set(job.id, job);
     selectedScale = job.options.scale;
+    refreshDualOutputWarning(job);
+    refreshOptionCardsState();
     return job;
 }
 
@@ -638,10 +697,12 @@ async function runQueueWorker() {
             }
 
             const elapsedSec = (Date.now() - Number(current.startedAt || Date.now())) / 1000;
-            updateJobProgress(current, elapsedSec);
-            current.updatedAt = Date.now();
-            jobs.set(current.id, current);
-            renderQueuePanel();
+            const changed = updateJobProgress(current, elapsedSec);
+            if (changed || Math.floor(elapsedSec) % 2 === 0) {
+                current.updatedAt = Date.now();
+                jobs.set(current.id, current);
+                renderQueuePanel();
+            }
         }, 350);
 
         activeProcessingJobId = job.id;
