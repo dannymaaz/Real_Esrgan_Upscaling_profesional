@@ -248,6 +248,23 @@ class RealESRGANUpscaler:
         if USE_GPU and torch.cuda.is_available():
             return 'cuda'
         return 'cpu'
+
+    def _is_portrait_sensitive_profile(self, profile: Dict) -> bool:
+        """Perfiles donde priorizamos textura natural de piel frente a intervención agresiva."""
+        key = str(profile.get("repair_profile", ""))
+        return key in {
+            "social_portrait_rescue",
+            "lowlight_portrait_natural",
+            "portrait_texture_guard"
+        }
+
+    def _is_heavy_artifact_profile(self, profile: Dict) -> bool:
+        """Perfiles de recuperación fuerte por artefactos/degradación."""
+        key = str(profile.get("repair_profile", ""))
+        return key in {
+            "artifact_rescue_general",
+            "old_scan_repair"
+        }
     
     def _get_model_arch(self, model_key: str):
         """
@@ -805,6 +822,8 @@ class RealESRGANUpscaler:
         compression_score = float(profile.get("compression_score", 0.0))
         blur_severity = profile.get("blur_severity", "low")
         lighting = profile.get("lighting_condition", "normal")
+        has_relevant_faces = bool(profile.get("has_faces", False)) and profile.get("face_importance") in {"medium", "high"}
+        profile_key = str(profile.get("repair_profile", "balanced_photo"))
 
         if image_type == "filtered_photo":
             base_amount = 0.12
@@ -829,7 +848,24 @@ class RealESRGANUpscaler:
         if bool(profile.get("degraded_social_portrait", False)):
             base_amount *= 0.72
 
-        detail_amount = float(np.clip(base_amount, 0.05, 0.2))
+        if profile_key in {"social_portrait_rescue", "portrait_texture_guard"}:
+            base_amount *= 0.7
+
+        if profile_key == "lowlight_portrait_natural":
+            base_amount *= 0.74
+
+        if profile_key in {"artifact_rescue_general", "old_scan_repair"}:
+            base_amount *= 0.86
+
+        if has_relevant_faces and compression_score > 0.55:
+            base_amount *= 0.74
+
+        if compression_score > 0.72 and noise_level in {"medium", "high"}:
+            base_amount *= 0.55
+
+        detail_amount = float(np.clip(base_amount, 0.0, 0.2))
+        if detail_amount < 0.035:
+            return img, False
 
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
@@ -848,7 +884,7 @@ class RealESRGANUpscaler:
 
         skin_mask = self._build_skin_mask(img)
         detail_map = np.full(skin_mask.shape, detail_amount, dtype=np.float32)
-        detail_map = np.where(skin_mask > 0.2, detail_map * 0.72, detail_map)
+        detail_map = np.where(skin_mask > 0.2, detail_map * 0.78, detail_map)
         detail_map = cv2.GaussianBlur(detail_map, (0, 0), 1.0)
         detail_map_3c = np.repeat(detail_map[:, :, None], 3, axis=2)
 
@@ -862,8 +898,6 @@ class RealESRGANUpscaler:
         image_type = profile.get("image_type", "photo")
         if image_type not in {"photo", "filtered_photo"}:
             return img, False
-        if not bool(profile.get("has_faces", False)):
-            return img, False
 
         compression_score = float(profile.get("compression_score", 0.0))
         noise_level = profile.get("noise_level", "low")
@@ -874,6 +908,10 @@ class RealESRGANUpscaler:
         skin_mask = self._build_skin_mask(img)
         if float(np.mean(skin_mask)) < 0.03:
             return img, False
+        skin_ratio = float(np.mean(skin_mask > 0.2))
+        has_relevant_faces = bool(profile.get("has_faces", False)) and profile.get("face_importance") in {"medium", "high"}
+        if not has_relevant_faces and skin_ratio < 0.1:
+            return img, False
 
         high_pass = img.astype(np.float32) - cv2.GaussianBlur(img.astype(np.float32), (0, 0), 1.15)
         strength = 0.12 if image_type == "photo" else 0.09
@@ -881,6 +919,15 @@ class RealESRGANUpscaler:
             strength *= 0.75
         if noise_level in {"medium", "high"}:
             strength *= 0.8
+
+        if 0.45 <= compression_score <= 0.75 and skin_ratio > 0.1:
+            strength *= 1.16
+
+        if compression_score > 0.78:
+            strength *= 0.85
+
+        if self._is_portrait_sensitive_profile(profile):
+            strength *= 1.12
 
         skin_strength = cv2.GaussianBlur(skin_mask.astype(np.float32), (0, 0), 1.2) * strength
         skin_strength_3c = np.repeat(skin_strength[:, :, None], 3, axis=2)
@@ -897,6 +944,8 @@ class RealESRGANUpscaler:
         compression_score = float(profile.get("compression_score", 0.0))
         blur_severity = profile.get("blur_severity", "low")
         uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
+        portrait_sensitive_profile = self._is_portrait_sensitive_profile(profile)
+        heavy_artifact_profile = self._is_heavy_artifact_profile(profile)
 
         denoise_strength = 0
         if noise_level == "high":
@@ -912,18 +961,39 @@ class RealESRGANUpscaler:
         if uniform_restore_mode:
             denoise_strength = max(denoise_strength, 5)
 
+        if heavy_artifact_profile:
+            denoise_strength = max(denoise_strength, 3)
+
         # En fotos no severas, evitar suavizado global para preservar textura natural.
         has_relevant_faces = bool(profile.get("has_faces", False)) and profile.get("face_importance") in {"medium", "high"}
+        skin_ratio_hint = 0.0
+        try:
+            skin_ratio_hint = float(np.mean(self._build_skin_mask(img) > 0.2))
+        except Exception:
+            skin_ratio_hint = 0.0
+        has_skin_dominant = skin_ratio_hint > 0.11
         if (
             not uniform_restore_mode
             and blur_severity != "strong"
-            and compression_score < (0.72 if has_relevant_faces else 0.6)
+            and compression_score < (0.72 if has_relevant_faces else (0.66 if has_skin_dominant else 0.6))
             and float(profile.get("pixelation_score", 0.0)) < 0.35
         ):
             return img
 
         # En retratos relativamente limpios, denoise mínimo para evitar piel plástica.
         if has_relevant_faces and compression_score < 0.76 and blur_severity != "strong":
+            denoise_strength = min(denoise_strength, 2)
+
+        if has_skin_dominant and compression_score < 0.72 and blur_severity != "strong":
+            denoise_strength = min(denoise_strength, 2)
+
+        if has_relevant_faces and skin_ratio_hint > 0.12 and blur_severity != "strong":
+            denoise_strength = min(denoise_strength, 2)
+
+        if bool(profile.get("degraded_social_portrait", False)) and has_relevant_faces:
+            denoise_strength = min(denoise_strength, 2)
+
+        if portrait_sensitive_profile and has_relevant_faces:
             denoise_strength = min(denoise_strength, 2)
 
         lighting = profile.get("lighting_condition", "normal")
@@ -953,6 +1023,15 @@ class RealESRGANUpscaler:
         else:
             keep_original = 0.68
 
+        if (has_relevant_faces or has_skin_dominant) and skin_ratio_hint > 0.1:
+            keep_original = min(0.82, keep_original + 0.1)
+
+        if bool(profile.get("degraded_social_portrait", False)) and has_relevant_faces:
+            keep_original = min(0.84, max(keep_original, 0.74))
+
+        if portrait_sensitive_profile and has_relevant_faces:
+            keep_original = min(0.86, max(keep_original, 0.76))
+
         blended = cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
         
         # Recuperar textura
@@ -960,8 +1039,8 @@ class RealESRGANUpscaler:
         
         # Paso final anti-plástico: Inyección de micro-grano natural
         # Solo si se aplicó denoise fuerte o es imagen de alta calidad que quedó muy lisa
-        if denoise_strength > 0 or lighting == "low_light":
-             restored = self._add_micro_grain(restored, profile)
+        if denoise_strength >= 3 or (lighting == "low_light" and denoise_strength >= 2):
+            restored = self._add_micro_grain(restored, profile)
              
         return restored
 
@@ -1018,6 +1097,7 @@ class RealESRGANUpscaler:
 
         blur_severity = profile.get("blur_severity", "low")
         uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
+        portrait_sensitive_profile = self._is_portrait_sensitive_profile(profile)
         if blur_severity == "strong":
             base_amount = 0.24
         elif blur_severity == "medium":
@@ -1048,6 +1128,14 @@ class RealESRGANUpscaler:
         noise_level = profile.get("noise_level", "low")
         if compression_score > 0.7 or noise_level == "high":
             sharpen_strength *= 0.7
+
+        if bool(profile.get("degraded_social_portrait", False)) and bool(profile.get("has_faces", False)):
+            sharpen_strength *= 0.82
+            sharpen_strength = np.where(skin_mask > 0.2, np.minimum(sharpen_strength, 0.05), sharpen_strength)
+
+        if portrait_sensitive_profile:
+            sharpen_strength *= 0.85
+            sharpen_strength = np.where(skin_mask > 0.2, np.minimum(sharpen_strength, 0.05), sharpen_strength)
 
         sharpen_strength_3c = np.repeat(sharpen_strength[:, :, None], 3, axis=2)
         

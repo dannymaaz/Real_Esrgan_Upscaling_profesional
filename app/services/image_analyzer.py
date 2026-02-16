@@ -78,6 +78,18 @@ class ImageAnalyzer:
             noise_level=noise_level,
             face_info=face_info
         )
+
+        repair_profile = self._determine_repair_profile(
+            image_type=image_type,
+            blur_metrics=blur_metrics,
+            noise_level=noise_level,
+            compression_metrics=compression_metrics,
+            pixelation_metrics=pixelation_metrics,
+            face_info=face_info,
+            lighting_condition=lighting_condition,
+            restoration_signals=restoration_signals,
+            source_info=source_info
+        )
         # Para decisiones de UX/procesamiento, solo contar rostros relevantes.
         has_faces = face_info["has_faces"] and face_info["importance"] in {"medium", "high"}
         
@@ -130,6 +142,9 @@ class ImageAnalyzer:
             "recommended_color_filter_correction": restoration_signals["recommended_color_filter_correction"],
             "recommended_old_photo_restore": restoration_signals["recommended_old_photo_restore"],
             "recommended_bw_restore": restoration_signals["recommended_bw_restore"],
+            "repair_profile": repair_profile["key"],
+            "repair_profile_strength": repair_profile["strength"],
+            "repair_profile_reason": repair_profile["reason"],
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
             "uniform_restore_mode": self._should_use_uniform_restore(
@@ -156,7 +171,8 @@ class ImageAnalyzer:
                 pixelation_metrics,
                 source_info,
                 lighting_condition,
-                restoration_signals
+                restoration_signals,
+                repair_profile
             )
         }
 
@@ -200,12 +216,13 @@ class ImageAnalyzer:
 
     def _generate_detailed_notes(
         self, width, height, image_type, sharpness, noise_level, has_faces, 
-        blur, compression, pixelation, source_info, lighting, restoration_signals=None
+        blur, compression, pixelation, source_info, lighting, restoration_signals=None, repair_profile=None
     ) -> list:
         """Genera notas humanas incluyendo origen y luz"""
         # Llamar al legacy para la base
         notes = self._generate_notes(width, height, image_type, sharpness, noise_level, has_faces, blur, compression, pixelation)
         restoration_signals = restoration_signals or {}
+        repair_profile = repair_profile or {"key": "balanced_photo", "strength": "medium", "reason": "Perfil balanceado"}
         
         if source_info["is_likely_social_media"]:
             notes.append("Probable origen de Redes Sociales (Compresión web)")
@@ -232,8 +249,116 @@ class ImageAnalyzer:
 
         if restoration_signals.get("scan_artifacts_detected"):
             notes.append("Posibles artefactos de escaneo/rayones detectados")
+
+        notes.append(
+            f"Perfil automático: {repair_profile.get('key', 'balanced_photo')} ({repair_profile.get('strength', 'medium')})"
+        )
              
         return notes
+
+    def _determine_repair_profile(
+        self,
+        image_type: str,
+        blur_metrics: Dict,
+        noise_level: str,
+        compression_metrics: Dict,
+        pixelation_metrics: Dict,
+        face_info: Dict,
+        lighting_condition: str,
+        restoration_signals: Dict,
+        source_info: Dict
+    ) -> Dict:
+        """
+        Define un perfil de reparación especializado para guiar el pipeline.
+        """
+        blur_severity = blur_metrics.get("blur_severity", "low")
+        compression_score = float(compression_metrics.get("compression_score", 0.0))
+        pixelation_score = float(pixelation_metrics.get("pixelation_score", 0.0))
+        has_relevant_faces = bool(face_info.get("has_faces", False) and face_info.get("importance") in {"medium", "high"})
+
+        if image_type == "anime":
+            return {
+                "key": "anime_preserve_lines",
+                "strength": "medium",
+                "reason": "Ilustración/anime detectado"
+            }
+
+        if restoration_signals.get("is_monochrome"):
+            return {
+                "key": "bw_recovery",
+                "strength": "high",
+                "reason": "Imagen monocromática detectada"
+            }
+
+        if restoration_signals.get("old_photo_detected") or restoration_signals.get("scan_artifacts_detected"):
+            return {
+                "key": "old_scan_repair",
+                "strength": "high",
+                "reason": "Señales de foto antigua o escaneo"
+            }
+
+        if restoration_signals.get("degraded_social_portrait"):
+            return {
+                "key": "social_portrait_rescue",
+                "strength": "high",
+                "reason": "Retrato social degradado (compresión + cast + blur)"
+            }
+
+        if restoration_signals.get("social_color_filter_detected"):
+            return {
+                "key": "social_color_balance",
+                "strength": "medium",
+                "reason": "Filtro de color social/teléfono detectado"
+            }
+
+        if has_relevant_faces and lighting_condition == "low_light" and (
+            noise_level in {"medium", "high"}
+            or compression_score > 0.3
+            or blur_severity in {"medium", "strong"}
+        ):
+            return {
+                "key": "lowlight_portrait_natural",
+                "strength": "medium",
+                "reason": "Retrato con poca luz y ruido"
+            }
+
+        if has_relevant_faces and (
+            compression_score > 0.5
+            or pixelation_score > 0.22
+            or blur_severity == "strong"
+        ):
+            return {
+                "key": "portrait_texture_guard",
+                "strength": "medium",
+                "reason": "Retrato comprimido con riesgo de piel plástica"
+            }
+
+        if compression_score > 0.56 or pixelation_score > 0.3:
+            return {
+                "key": "artifact_rescue_general",
+                "strength": "medium",
+                "reason": "Artefactos de compresión/pixelado detectados"
+            }
+
+        if (
+            image_type == "photo"
+            and blur_severity == "low"
+            and noise_level == "low"
+            and compression_score < 0.28
+            and pixelation_score < 0.2
+            and not source_info.get("is_likely_social_media", False)
+        ):
+            return {
+                "key": "clean_photo_detail",
+                "strength": "low",
+                "reason": "Foto relativamente limpia"
+            }
+
+        return {
+            "key": "balanced_photo",
+            "strength": "medium",
+            "reason": "Perfil balanceado por defecto"
+        }
 
     def _analyze_restoration_signals(
         self,

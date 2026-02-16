@@ -228,6 +228,8 @@ async def upscale_image(
             "old_photo_detected": bool(analysis.get("old_photo_detected", False)),
             "scan_artifacts_detected": bool(analysis.get("scan_artifacts_detected", False)),
             "scratch_score": float(analysis.get("scratch_score", 0.0)),
+            "repair_profile": analysis.get("repair_profile", "balanced_photo"),
+            "repair_profile_strength": analysis.get("repair_profile_strength", "medium"),
             "safe_pre_resize": True,
             "remove_filter": effective_remove_filter,
             "remove_color_filter": effective_remove_filter,
@@ -408,6 +410,9 @@ async def upscale_image(
         result["total_pipeline_time_seconds"] = round(analysis_elapsed_seconds + elapsed_seconds, 2)
         result["analysis_image_type"] = analyzed_image_type
         result["effective_image_type"] = effective_image_type
+        result["repair_profile"] = analysis.get("repair_profile", "balanced_photo")
+        result["repair_profile_strength"] = analysis.get("repair_profile_strength", "medium")
+        result["repair_profile_reason"] = analysis.get("repair_profile_reason", "")
         result["requested_remove_filter"] = bool(remove_filter)
         result["requested_remove_color_filter"] = bool(remove_color_filter)
         result["requested_restore_old_photo"] = bool(restore_old_photo)

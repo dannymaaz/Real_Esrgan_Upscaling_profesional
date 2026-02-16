@@ -746,6 +746,27 @@ function removeCompletedFromQueue(jobId) {
     renderQueuePanel();
 }
 
+function openCancelConfirmModal(jobId) {
+    const modal = document.getElementById('cancelConfirmModal');
+    if (!modal) {
+        if (window.confirm('¿Seguro que deseas cancelar este procesamiento?')) {
+            cancelProcessingJob(jobId);
+        }
+        return;
+    }
+
+    pendingCancelJobId = jobId;
+    modal.style.display = 'flex';
+}
+
+function closeCancelConfirmModal() {
+    pendingCancelJobId = null;
+    const modal = document.getElementById('cancelConfirmModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
 function cancelProcessingJob(jobId) {
     const job = jobs.get(jobId);
     if (!job || job.status !== 'processing') {
@@ -1111,9 +1132,7 @@ function handleQueueActionClick(event) {
             retryJob(jobId);
             break;
         case 'cancel':
-            if (window.confirm('¿Seguro que deseas cancelar este procesamiento?')) {
-                cancelProcessingJob(jobId);
-            }
+            openCancelConfirmModal(jobId);
             break;
         case 'remove':
             removeJob(jobId);

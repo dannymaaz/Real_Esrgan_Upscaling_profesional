@@ -279,6 +279,7 @@ class UIController {
                 loadImage(processedImg, processedSrc, 'Processed')
             ]);
 
+            this.fitComparisonContainer(originalImg, processedImg);
             this.setupComparisonSlider();
             this.setupZoomControls();
         };
@@ -427,15 +428,31 @@ class UIController {
         const container = document.getElementById('comparisonContainer');
         const scroller = document.getElementById('scroller');
         const beforeWrapper = document.querySelector('.img-wrapper.before');
+        const afterWrapper = document.getElementById('afterWrapper');
+        const comparison = document.querySelector('.image-comparison');
+        const divider = document.getElementById('comparisonDivider');
 
-        if (!container || !scroller || !beforeWrapper) {
-            console.error('Comparison slider elements not found:', { container, scroller, beforeWrapper });
+        if (!container || !scroller || !beforeWrapper || !afterWrapper || !comparison) {
+            console.error('Comparison slider elements not found:', {
+                container,
+                scroller,
+                beforeWrapper,
+                afterWrapper,
+                comparison
+            });
             return;
         }
 
         // Reset state
-        beforeWrapper.style.width = '50%';
-        scroller.style.left = '50%';
+        beforeWrapper.style.width = '100%';
+        afterWrapper.style.width = '100%';
+        const defaultSplit = 50;
+        scroller.style.left = `${defaultSplit}%`;
+        comparison.style.setProperty('--split-pos', `${defaultSplit}%`);
+        afterWrapper.style.clipPath = `inset(0 0 0 ${defaultSplit}%)`;
+        if (divider) {
+            divider.style.left = `${defaultSplit}%`;
+        }
 
         if (container.dataset.sliderBound === '1') {
             return;
@@ -455,7 +472,7 @@ class UIController {
 
         scroller.addEventListener('pointermove', (e) => {
             if (!active) return;
-            this.updateSliderPosition(e, container, scroller, beforeWrapper);
+            this.updateSliderPosition(e, container, scroller, comparison, afterWrapper, divider);
         });
 
         const stopDrag = () => {
@@ -468,7 +485,27 @@ class UIController {
         scroller.addEventListener('lostpointercapture', stopDrag);
     }
 
-    static updateSliderPosition(e, container, scroller, beforeWrapper) {
+    static fitComparisonContainer(originalImg, processedImg) {
+        const container = document.getElementById('comparisonContainer');
+        if (!container || !originalImg || !processedImg) return;
+
+        const ow = originalImg.naturalWidth || 0;
+        const oh = originalImg.naturalHeight || 0;
+        const pw = processedImg.naturalWidth || ow;
+        const ph = processedImg.naturalHeight || oh;
+        const refW = Math.max(ow, pw);
+        const refH = Math.max(oh, ph);
+        if (refW <= 0 || refH <= 0) return;
+
+        const viewportMax = Math.max(360, Math.floor(window.innerHeight * 0.72));
+        const viewportMin = 280;
+        const availableWidth = Math.max(320, container.clientWidth || container.parentElement?.clientWidth || 320);
+        const fittedHeight = Math.round((availableWidth * refH) / refW);
+        const finalHeight = Math.max(viewportMin, Math.min(viewportMax, fittedHeight));
+        container.style.height = `${finalHeight}px`;
+    }
+
+    static updateSliderPosition(e, container, scroller, comparison, afterWrapper, divider = null) {
         const rect = container.getBoundingClientRect();
         let x = e.clientX - rect.left;
 
@@ -479,7 +516,11 @@ class UIController {
         const percentage = (x / rect.width) * 100;
 
         scroller.style.left = `${percentage}%`;
-        beforeWrapper.style.width = `${percentage}%`;
+        comparison.style.setProperty('--split-pos', `${percentage}%`);
+        afterWrapper.style.clipPath = `inset(0 0 0 ${percentage}%)`;
+        if (divider) {
+            divider.style.left = `${percentage}%`;
+        }
     }
     static setupZoomControls() {
         const zoomInBtn = document.getElementById('zoomInBtn');
