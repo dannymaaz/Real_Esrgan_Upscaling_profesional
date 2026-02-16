@@ -421,11 +421,17 @@ function applyJobControls(job, showPanel = true) {
     const bwRestoreBtn = document.getElementById('bwRestoreBtn');
 
     const canColorFilterCorrection = Boolean(
+        job.analysis.recommended_color_filter_correction
+        ||
         job.analysis.social_color_filter_detected
         || job.analysis.filter_detected
         || job.analysis.degraded_social_portrait
     );
-    const canRestoreOldPhoto = Boolean(job.analysis.old_photo_detected || job.analysis.scan_artifacts_detected);
+    const canRestoreOldPhoto = Boolean(
+        job.analysis.recommended_old_photo_restore
+        || job.analysis.old_photo_detected
+        || job.analysis.scan_artifacts_detected
+    );
     const canRestoreBw = Boolean(job.analysis.is_monochrome);
 
     if (filterRestoreContainer && removeFilterBtn) {

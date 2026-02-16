@@ -190,8 +190,7 @@ async def upscale_image(
 
         can_restore_color_filter = bool(
             analysis.get("recommended_color_filter_correction")
-            or analysis.get("recommended_filter_restoration")
-            analysis.get("social_color_filter_detected")
+            or analysis.get("social_color_filter_detected")
             or analysis.get("filter_detected")
             or analysis.get("degraded_social_portrait")
         )
