@@ -55,6 +55,13 @@ A diferencia de otros upscalers genéricos, este proyecto implementa una capa de
    python run.py
    ```
 
+5. **Modo Robusto (Recomendado para Producción/Estabilidad):**
+   Si deseas que el servidor se mantenga siempre activo y se reinicie automáticamente ante cualquier fallo:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File run_robust.ps1
+   ```
+
+
 ---
 
 ## 🛡️ Seguridad y Optimización
