@@ -196,7 +196,7 @@ async def upscale_image(
 
         effective_remove_filter = bool(remove_filter and can_restore_filter)
         effective_restore_bw = bool(restore_bw and can_restore_bw)
-        effective_dual_output = bool(dual_output and effective_remove_filter)
+        effective_dual_output = bool(dual_output and (effective_remove_filter or effective_restore_bw))
 
         # Perfil de restauración para anti artefactos y sharpen por región
         base_processing_profile = {

@@ -418,16 +418,35 @@ class RealESRGANUpscaler:
         else:
             # Fallback: colorización tonal muy suave para evitar resultado artificial.
             l_norm = np.clip(l_channel / 255.0, 0.0, 1.0)
-            a_tint = 128 + (l_norm - 0.5) * 8 + 2.5
-            b_tint = 128 + (l_norm - 0.5) * 14 + 6
+            a_tint = 128 + (l_norm - 0.5) * 5 + 1.8
+            b_tint = 128 + (l_norm - 0.5) * 9 + 4.5
+
+            # Si detectamos rostro, calentar la zona para piel más natural.
+            face_boxes = self._detect_face_boxes(img)
+            if face_boxes:
+                face_mask = np.zeros(l_channel.shape, dtype=np.float32)
+                h, w = l_channel.shape
+                for x, y, fw, fh in face_boxes:
+                    ex = int(fw * 0.28)
+                    ey = int(fh * 0.3)
+                    x1 = max(0, x - ex)
+                    y1 = max(0, y - ey)
+                    x2 = min(w, x + fw + ex)
+                    y2 = min(h, y + fh + ey)
+                    cv2.rectangle(face_mask, (x1, y1), (x2, y2), 1.0, -1)
+
+                face_mask = cv2.GaussianBlur(face_mask, (0, 0), 5.5)
+                a_tint = a_tint + face_mask * 6.5
+                b_tint = b_tint + face_mask * 11.0
+
             toned_lab = np.stack([
                 l_channel,
-                np.clip(a_tint, 110, 152),
-                np.clip(b_tint, 110, 168)
+                np.clip(a_tint, 112, 146),
+                np.clip(b_tint, 112, 162)
             ], axis=2).astype(np.uint8)
             recolored = cv2.cvtColor(toned_lab, cv2.COLOR_LAB2BGR)
 
-        recolored = cv2.addWeighted(img, 0.42, recolored, 0.58, 0)
+        recolored = cv2.addWeighted(img, 0.5, recolored, 0.5, 0)
         return recolored, True
 
     def _apply_preprocess_options(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, Dict]:

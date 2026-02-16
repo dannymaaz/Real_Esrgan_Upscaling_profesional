@@ -149,20 +149,18 @@ function initializeEventListeners() {
 
     if (removeFilterBtn && dualOutputContainer) {
         removeFilterBtn.addEventListener('change', () => {
-            dualOutputContainer.style.display = removeFilterBtn.checked ? 'block' : 'none';
-            const dualOutputBtn = document.getElementById('dualOutputBtn');
-            if (!removeFilterBtn.checked && dualOutputBtn) {
-                dualOutputBtn.checked = false;
-            }
-
             const selected = getSelectedJob();
             if (selected) {
                 selected.options.removeFilter = Boolean(removeFilterBtn.checked);
-                if (!selected.options.removeFilter) {
+                if (!(selected.options.removeFilter || selected.options.restoreMonochrome)) {
                     selected.options.dualOutput = false;
                 }
+                selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
                 jobs.set(selected.id, selected);
+                refreshDualOutputVisibilityForJob(selected);
                 renderQueuePanel();
+            } else {
+                refreshDualOutputVisibilityForJob(null);
             }
         });
     }
@@ -171,7 +169,7 @@ function initializeEventListeners() {
         dualOutputBtn.addEventListener('change', () => {
             const selected = getSelectedJob();
             if (!selected) return;
-            selected.options.dualOutput = Boolean(dualOutputBtn.checked && selected.options.removeFilter);
+            selected.options.dualOutput = Boolean(dualOutputBtn.checked && (selected.options.removeFilter || selected.options.restoreMonochrome));
             selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
             jobs.set(selected.id, selected);
             renderQueuePanel();
@@ -183,8 +181,12 @@ function initializeEventListeners() {
             const selected = getSelectedJob();
             if (!selected) return;
             selected.options.restoreMonochrome = Boolean(bwRestoreBtn.checked);
+            if (!(selected.options.removeFilter || selected.options.restoreMonochrome)) {
+                selected.options.dualOutput = false;
+            }
             selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
             jobs.set(selected.id, selected);
+            refreshDualOutputVisibilityForJob(selected);
             renderQueuePanel();
         });
     }
@@ -281,6 +283,18 @@ function updateJobProgress(job, elapsedSeconds) {
     job.progress = Math.round(eased * 100);
     const remaining = Math.max(0, estimate - elapsedSeconds);
     job.progressMessage = `ETA aprox: ${formatDurationShort(remaining)}`;
+}
+
+function refreshDualOutputVisibilityForJob(job) {
+    const dualOutputContainer = document.getElementById('dualOutputContainer');
+    const dualOutputBtn = document.getElementById('dualOutputBtn');
+    if (!dualOutputContainer || !dualOutputBtn) return;
+
+    const canEnableDual = Boolean(job && (job.options?.removeFilter || job.options?.restoreMonochrome));
+    dualOutputContainer.style.display = canEnableDual ? 'block' : 'none';
+    if (!canEnableDual) {
+        dualOutputBtn.checked = false;
+    }
 }
 
 function validateFile(file) {
@@ -385,8 +399,9 @@ function applyJobControls(job, showPanel = true) {
     }
 
     if (dualOutputContainer && dualOutputBtn) {
-        dualOutputContainer.style.display = canRestoreFilter && Boolean(job.options.removeFilter) ? 'block' : 'none';
-        dualOutputBtn.checked = canRestoreFilter && Boolean(job.options.removeFilter) && Boolean(job.options.dualOutput);
+        const canEnableDual = (canRestoreFilter && Boolean(job.options.removeFilter)) || (canRestoreBw && Boolean(job.options.restoreMonochrome));
+        dualOutputContainer.style.display = canEnableDual ? 'block' : 'none';
+        dualOutputBtn.checked = canEnableDual && Boolean(job.options.dualOutput);
     }
 
     if (bwRestoreContainer && bwRestoreBtn) {
@@ -454,8 +469,8 @@ function syncSelectedJobOptionsFromUI() {
     job.options.faceEnhance = Boolean(faceEnhanceBtn && faceEnhanceBtn.checked);
     job.options.forcedImageType = getForcedImageTypeFromUI(job.analysis);
     job.options.removeFilter = Boolean(removeFilterBtn && removeFilterBtn.checked);
-    job.options.dualOutput = Boolean(dualOutputBtn && dualOutputBtn.checked && job.options.removeFilter);
     job.options.restoreMonochrome = Boolean(bwRestoreBtn && bwRestoreBtn.checked && job.analysis?.is_monochrome);
+    job.options.dualOutput = Boolean(dualOutputBtn && dualOutputBtn.checked && (job.options.removeFilter || job.options.restoreMonochrome));
     job.estimatedDurationSec = estimateDurationSeconds(job.analysis, job.options);
     job.updatedAt = Date.now();
 
