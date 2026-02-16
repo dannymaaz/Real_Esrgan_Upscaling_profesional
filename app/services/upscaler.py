@@ -726,6 +726,12 @@ class RealESRGANUpscaler:
         except (MemoryError, cv2.error, ValueError, TypeError) as e:
             print(f"Advertencia: Saltando detalle global por error: {str(e)}")
 
+        skin_texture_applied = False
+        try:
+            output, skin_texture_applied = self._restore_skin_microtexture(output, processing_profile)
+        except (MemoryError, cv2.error, ValueError, TypeError) as e:
+            print(f"Advertencia: Saltando microtextura de piel por error: {str(e)}")
+
         # Guardar resultado
         try:
             cv2.imwrite(str(output_path), output)
@@ -752,6 +758,7 @@ class RealESRGANUpscaler:
             "face_enhance_skipped": face_enhance_skipped,
             "postprocess_applied": postprocess_applied,
             "detail_boost_applied": detail_boost_applied,
+            "skin_texture_applied": skin_texture_applied,
             "safe_pre_resize_applied": pre_resize_applied,
             "safe_pre_resize_factor": round(pre_resize_factor, 3),
             "safe_mode_output_downscaled": safe_mode_output_downscaled,
@@ -775,7 +782,7 @@ class RealESRGANUpscaler:
         lighting = profile.get("lighting_condition", "normal")
 
         if image_type == "filtered_photo":
-            base_amount = 0.16
+            base_amount = 0.12
         elif blur_severity == "strong":
             base_amount = 0.14
         else:
@@ -799,7 +806,7 @@ class RealESRGANUpscaler:
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
         clahe = cv2.createCLAHE(
-            clipLimit=1.45 if image_type == "filtered_photo" else 1.25,
+            clipLimit=1.28 if image_type == "filtered_photo" else 1.2,
             tileGridSize=(8, 8)
         )
         l_contrast = clahe.apply(l_channel)
@@ -813,12 +820,44 @@ class RealESRGANUpscaler:
 
         skin_mask = self._build_skin_mask(img)
         detail_map = np.full(skin_mask.shape, detail_amount, dtype=np.float32)
-        detail_map = np.where(skin_mask > 0.2, detail_map * 0.56, detail_map)
+        detail_map = np.where(skin_mask > 0.2, detail_map * 0.72, detail_map)
         detail_map = cv2.GaussianBlur(detail_map, (0, 0), 1.0)
         detail_map_3c = np.repeat(detail_map[:, :, None], 3, axis=2)
 
         boosted = img.astype(np.float32) * (1.0 - detail_map_3c) + sharpened.astype(np.float32) * detail_map_3c
         return np.clip(boosted, 0, 255).astype(np.uint8), True
+
+    def _restore_skin_microtexture(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, bool]:
+        """
+        Recupera microtextura suave en piel para reducir apariencia plástica en retratos.
+        """
+        image_type = profile.get("image_type", "photo")
+        if image_type not in {"photo", "filtered_photo"}:
+            return img, False
+        if not bool(profile.get("has_faces", False)):
+            return img, False
+
+        compression_score = float(profile.get("compression_score", 0.0))
+        noise_level = profile.get("noise_level", "low")
+        if compression_score > 0.78 and noise_level == "high":
+            return img, False
+
+        img = self._ensure_bgr_uint8(img)
+        skin_mask = self._build_skin_mask(img)
+        if float(np.mean(skin_mask)) < 0.03:
+            return img, False
+
+        high_pass = img.astype(np.float32) - cv2.GaussianBlur(img.astype(np.float32), (0, 0), 1.15)
+        strength = 0.12 if image_type == "photo" else 0.09
+        if compression_score > 0.55:
+            strength *= 0.75
+        if noise_level in {"medium", "high"}:
+            strength *= 0.8
+
+        skin_strength = cv2.GaussianBlur(skin_mask.astype(np.float32), (0, 0), 1.2) * strength
+        skin_strength_3c = np.repeat(skin_strength[:, :, None], 3, axis=2)
+        textured = img.astype(np.float32) + high_pass * skin_strength_3c
+        return np.clip(textured, 0, 255).astype(np.uint8), True
 
     def _apply_adaptive_artifact_reduction(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """
@@ -846,13 +885,18 @@ class RealESRGANUpscaler:
             denoise_strength = max(denoise_strength, 5)
 
         # En fotos no severas, evitar suavizado global para preservar textura natural.
+        has_relevant_faces = bool(profile.get("has_faces", False)) and profile.get("face_importance") in {"medium", "high"}
         if (
             not uniform_restore_mode
             and blur_severity != "strong"
-            and compression_score < 0.6
+            and compression_score < (0.72 if has_relevant_faces else 0.6)
             and float(profile.get("pixelation_score", 0.0)) < 0.35
         ):
             return img
+
+        # En retratos relativamente limpios, denoise mínimo para evitar piel plástica.
+        if has_relevant_faces and compression_score < 0.76 and blur_severity != "strong":
+            denoise_strength = min(denoise_strength, 2)
 
         lighting = profile.get("lighting_condition", "normal")
         if lighting == "low_light":
@@ -906,7 +950,8 @@ class RealESRGANUpscaler:
 
         skin_mask = self._build_skin_mask(original)
         texture_mask = np.clip((grad_norm - 0.12) * 1.6, 0.0, 1.0)
-        texture_mask *= (1.0 - np.clip(skin_mask, 0.0, 1.0))
+        # Mantener una pequeña porción de microtextura en piel para evitar acabado plástico.
+        texture_mask *= (1.0 - np.clip(skin_mask, 0.0, 1.0) * 0.78)
         texture_mask = cv2.GaussianBlur(texture_mask, (0, 0), 1.2)
 
         blur_severity = profile.get("blur_severity", "low")
@@ -918,7 +963,7 @@ class RealESRGANUpscaler:
         elif blur_severity == "medium":
             texture_strength = 0.12
         else:
-            texture_strength = 0.16
+            texture_strength = 0.14
 
         high_pass = original.astype(np.float32) - cv2.GaussianBlur(original.astype(np.float32), (0, 0), 1.05)
         texture_gain = high_pass * (texture_strength * texture_mask[:, :, None])
