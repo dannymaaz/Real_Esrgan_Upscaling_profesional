@@ -86,11 +86,14 @@ async def analyze_image(file: UploadFile = File(...)):
         filename, file_path = await save_upload_file(file)
         
         # Analizar imagen en threadpool para no bloquear event loop
+        analysis_started_at = perf_counter()
         analysis = await run_in_threadpool(analyzer.analyze_image, file_path)
+        analysis_elapsed_seconds = perf_counter() - analysis_started_at
         
         # Agregar información del archivo
         analysis["filename"] = filename
         analysis["file_size_mb"] = round(get_file_size_mb(file_path), 2)
+        analysis["analysis_time_seconds"] = round(analysis_elapsed_seconds, 2)
         
         # Agregar información de modelos disponibles
         analysis["available_models"] = upscaler.get_available_models()
@@ -128,7 +131,9 @@ async def upscale_image(
         input_filename, input_path = await save_upload_file(file)
         
         # Analizar imagen para obtener dimensiones y tipo
+        analysis_started_at = perf_counter()
         analysis = await run_in_threadpool(analyzer.analyze_image, input_path)
+        analysis_elapsed_seconds = perf_counter() - analysis_started_at
         original_width = analysis.get("width", 0)
         original_height = analysis.get("height", 0)
         analyzed_image_type = analysis.get("image_type", "photo")
@@ -272,6 +277,8 @@ async def upscale_image(
         result["output_filename"] = output_filename
         result["output_size_mb"] = round(get_file_size_mb(output_path), 2)
         result["processing_time_seconds"] = round(elapsed_seconds, 2)
+        result["analysis_time_seconds"] = round(analysis_elapsed_seconds, 2)
+        result["total_pipeline_time_seconds"] = round(analysis_elapsed_seconds + elapsed_seconds, 2)
         result["analysis_image_type"] = analyzed_image_type
         result["effective_image_type"] = effective_image_type
         result["type_overridden"] = bool(normalized_forced_type and normalized_forced_type != analyzed_image_type)

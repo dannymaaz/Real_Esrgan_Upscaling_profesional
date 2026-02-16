@@ -377,7 +377,7 @@ body {
     object-position: center;
     pointer-events: none;
     transform-origin: 0 0;
-    transition: transform 0.1s ease-out;
+    transition: none;
     max-width: none;
 }
 
@@ -480,7 +480,7 @@ body {
     justify-content: center;
 }
 
-/* ========== Estilos de Recomendación ========== */
+/* ========== Estilos de Recomendaciï¿½n ========== */
 .rec-main {
     font-weight: 600;
     color: var(--primary-blue-light);

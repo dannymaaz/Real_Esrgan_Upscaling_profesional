@@ -198,6 +198,17 @@ class UIController {
             UIController.showError('Error al cargar las imágenes: ' + error.message);
         });
 
+        const formattedScaleTime = this.formatDuration(data.processing_time_seconds);
+        const formattedAnalysisTime = this.formatDuration(data.analysis_time_seconds);
+        const totalSeconds = (
+            this.toFiniteNumber(data.total_pipeline_time_seconds)
+            ?? (
+                (this.toFiniteNumber(data.processing_time_seconds) ?? 0)
+                + (this.toFiniteNumber(data.analysis_time_seconds) ?? 0)
+            )
+        );
+        const formattedTotalTime = this.formatDuration(totalSeconds);
+
         // Actualizar información del resultado
         const resultInfo = document.getElementById('resultInfo');
         resultInfo.innerHTML = `
@@ -220,8 +231,16 @@ class UIController {
                 <span class="info-value">${data.face_enhance ? 'Sí' : 'No'}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Tiempo:</span>
-                <span class="info-value">${data.processing_time_seconds ?? '-'} s</span>
+                <span class="info-label">Análisis:</span>
+                <span class="info-value time-value"><span class="time-chip">${formattedAnalysisTime}</span></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Escalado:</span>
+                <span class="info-value time-value"><span class="time-chip">${formattedScaleTime}</span></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Tiempo total:</span>
+                <span class="info-value time-value"><span class="time-chip time-chip-total">${formattedTotalTime}</span></span>
             </div>
             ${data.type_overridden ? `
             <div class="info-row">
@@ -331,6 +350,13 @@ class UIController {
         }
         const state = this._zoomState;
 
+        let dragActive = false;
+        let dragPointerId = null;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let dragStartPanX = 0;
+        let dragStartPanY = 0;
+
         const getDisplaySize = (imgEl) => {
             const cw = container.clientWidth || 1;
             const ch = container.clientHeight || 1;
@@ -362,23 +388,16 @@ class UIController {
             processedImg.style.transform = transform;
 
             zoomLevelDisplay.textContent = `${Math.round(state.scale * 100)}%`;
-            container.style.cursor = state.scale > 1 ? 'grab' : 'col-resize';
+            if (state.scale > 1) {
+                container.style.cursor = dragActive ? 'grabbing' : 'grab';
+            } else {
+                container.style.cursor = 'col-resize';
+            }
         };
 
-        const followPointer = (e) => {
-            if (state.scale <= 1) return;
-
-            const rect = container.getBoundingClientRect();
-            const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-            const yRatio = Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)));
-
-            const base = getDisplaySize(originalImg);
-            const maxX = Math.max(0, ((base.width * state.scale) - base.width) * 0.5);
-            const maxY = Math.max(0, ((base.height * state.scale) - base.height) * 0.5);
-
-            state.panX = (0.5 - xRatio) * (maxX * 2);
-            state.panY = (0.5 - yRatio) * (maxY * 2);
-            clampPan();
+        const stopPanDrag = () => {
+            dragActive = false;
+            dragPointerId = null;
             applyTransform();
         };
 
@@ -407,24 +426,55 @@ class UIController {
         if (container.dataset.zoomBound !== '1') {
             container.dataset.zoomBound = '1';
 
-            container.addEventListener('mousemove', (e) => {
-                followPointer(e);
-            });
-
             container.addEventListener('wheel', (e) => {
                 e.preventDefault();
+                const previousScale = state.scale;
+
                 if (e.deltaY < 0) {
                     state.scale += 0.1;
                 } else {
                     state.scale -= 0.1;
                 }
+
                 if (state.scale <= 1) {
                     state.scale = 1;
                     state.panX = 0;
                     state.panY = 0;
+                } else if (previousScale === 1 && state.scale > 1) {
+                    // Mantener centro estable al primer zoom.
+                    state.panX = 0;
+                    state.panY = 0;
                 }
+
                 applyTransform();
             }, { passive: false });
+
+            container.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return;
+                if (state.scale <= 1) return;
+                if (e.target && e.target.closest('#scroller')) return;
+
+                dragActive = true;
+                dragPointerId = e.pointerId;
+                dragStartX = e.clientX;
+                dragStartY = e.clientY;
+                dragStartPanX = state.panX;
+                dragStartPanY = state.panY;
+                container.setPointerCapture(dragPointerId);
+                applyTransform();
+                e.preventDefault();
+            });
+
+            container.addEventListener('pointermove', (e) => {
+                if (!dragActive || dragPointerId !== e.pointerId) return;
+                state.panX = dragStartPanX + (e.clientX - dragStartX);
+                state.panY = dragStartPanY + (e.clientY - dragStartY);
+                applyTransform();
+            });
+
+            container.addEventListener('pointerup', stopPanDrag);
+            container.addEventListener('pointercancel', stopPanDrag);
+            container.addEventListener('lostpointercapture', stopPanDrag);
         }
 
         applyTransform();
@@ -478,6 +528,37 @@ class UIController {
      */
     static closeError() {
         document.getElementById('errorModal').style.display = 'none';
+    }
+
+    static toFiniteNumber(value) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    static formatDuration(secondsValue) {
+        const secondsRaw = this.toFiniteNumber(secondsValue);
+        if (secondsRaw === null || secondsRaw < 0) {
+            return '-';
+        }
+
+        const seconds = Math.max(0, secondsRaw);
+        if (seconds < 60) {
+            const oneDecimal = Math.round(seconds * 10) / 10;
+            const compact = Number.isInteger(oneDecimal) ? oneDecimal.toFixed(0) : oneDecimal.toFixed(1);
+            return `${compact} s`;
+        }
+
+        const roundedSeconds = Math.round(seconds);
+        const minutes = Math.floor(roundedSeconds / 60);
+        const secondsRemainder = roundedSeconds % 60;
+
+        if (minutes < 60) {
+            return secondsRemainder > 0 ? `${minutes} min ${secondsRemainder} s` : `${minutes} min`;
+        }
+
+        const hours = Math.floor(minutes / 60);
+        const minutesRemainder = minutes % 60;
+        return minutesRemainder > 0 ? `${hours} h ${minutesRemainder} min` : `${hours} h`;
     }
 
     /**
