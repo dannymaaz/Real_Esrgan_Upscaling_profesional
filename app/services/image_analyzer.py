@@ -65,7 +65,9 @@ class ImageAnalyzer:
             compression_metrics=compression_metrics,
             pixelation_metrics=pixelation_metrics,
             noise_level=noise_level,
-            source_info=source_info
+            source_info=source_info,
+            blur_metrics=blur_metrics,
+            face_info=face_info
         )
         
         image_type = self._detect_image_type(
@@ -116,12 +118,17 @@ class ImageAnalyzer:
             "lighting_condition": lighting_condition,
             "filter_detected": restoration_signals["filter_detected"],
             "filter_strength": restoration_signals["filter_strength"],
+            "social_color_filter_detected": restoration_signals["social_color_filter_detected"],
+            "social_filter_strength": restoration_signals["social_filter_strength"],
+            "degraded_social_portrait": restoration_signals["degraded_social_portrait"],
             "is_monochrome": restoration_signals["is_monochrome"],
             "monochrome_confidence": round(restoration_signals["monochrome_confidence"], 3),
             "old_photo_detected": restoration_signals["old_photo_detected"],
             "scan_artifacts_detected": restoration_signals["scan_artifacts_detected"],
             "scratch_score": round(restoration_signals["scratch_score"], 3),
             "recommended_filter_restoration": restoration_signals["recommended_filter_restoration"],
+            "recommended_color_filter_correction": restoration_signals["recommended_color_filter_correction"],
+            "recommended_old_photo_restore": restoration_signals["recommended_old_photo_restore"],
             "recommended_bw_restore": restoration_signals["recommended_bw_restore"],
             "recommended_scale": recommended_scale,
             "recommended_model": recommended_model,
@@ -210,6 +217,13 @@ class ImageAnalyzer:
             strength = restoration_signals.get("filter_strength", "medium")
             notes.append(f"Filtro detectado (intensidad {strength})")
 
+        if restoration_signals.get("social_color_filter_detected"):
+            strength = restoration_signals.get("social_filter_strength", "medium")
+            notes.append(f"Posible filtro de color social/teléfono (intensidad {strength})")
+
+        if restoration_signals.get("degraded_social_portrait"):
+            notes.append("Retrato social degradado detectado: se sugiere corrección de color")
+
         if restoration_signals.get("is_monochrome"):
             notes.append("Imagen monocromática detectada (B/N o desaturada)")
 
@@ -228,7 +242,9 @@ class ImageAnalyzer:
         compression_metrics: Dict,
         pixelation_metrics: Dict,
         noise_level: str,
-        source_info: Dict
+        source_info: Dict,
+        blur_metrics: Dict,
+        face_info: Dict
     ) -> Dict:
         """
         Detecta señales para restauración opcional (filtro, B/N, foto antigua/escaneo).
@@ -237,6 +253,14 @@ class ImageAnalyzer:
         saturation = float(np.mean(hsv[:, :, 1]))
 
         b_channel, g_channel, r_channel = cv2.split(img)
+        b_mean = float(np.mean(b_channel))
+        g_mean = float(np.mean(g_channel))
+        r_mean = float(np.mean(r_channel))
+        global_mean = max(1.0, (r_mean + g_mean + b_mean) / 3.0)
+
+        magenta_cast = (((r_mean + b_mean) * 0.5) - g_mean) / global_mean
+        warm_cast = (r_mean - b_mean) / global_mean
+
         rg_diff = float(np.mean(np.abs(r_channel.astype(np.float32) - g_channel.astype(np.float32))))
         rb_diff = float(np.mean(np.abs(r_channel.astype(np.float32) - b_channel.astype(np.float32))))
         gb_diff = float(np.mean(np.abs(g_channel.astype(np.float32) - b_channel.astype(np.float32))))
@@ -271,6 +295,9 @@ class ImageAnalyzer:
         contrast_std = float(np.std(gray))
         compression_score = float(compression_metrics.get("compression_score", 0.0))
         pixelation_score = float(pixelation_metrics.get("pixelation_score", 0.0))
+        highlight_clip_ratio = float(np.mean(gray > 245))
+        blur_severity = blur_metrics.get("blur_severity", "low")
+        has_relevant_faces = bool(face_info.get("has_faces", False) and face_info.get("importance") in {"medium", "high"})
 
         old_photo_detected = bool(
             (is_monochrome and contrast_std < 62)
@@ -284,6 +311,38 @@ class ImageAnalyzer:
             or (source_info.get("format") in {"TIFF", "BMP"} and contrast_std < 68)
         )
 
+        social_filter_score = 0.0
+        if source_info.get("is_likely_social_media"):
+            social_filter_score += 0.24
+        if magenta_cast > 0.07:
+            social_filter_score += 0.42
+        elif magenta_cast > 0.04:
+            social_filter_score += 0.26
+        if warm_cast > 0.06:
+            social_filter_score += 0.18
+        if highlight_clip_ratio > 0.04:
+            social_filter_score += 0.2
+        if saturation > 80:
+            social_filter_score += 0.15
+
+        degraded_social_portrait = bool(
+            has_relevant_faces
+            and (compression_score > 0.34 or pixelation_score > 0.2 or blur_severity in {"medium", "strong"})
+            and (magenta_cast > 0.04 or warm_cast > 0.05 or highlight_clip_ratio > 0.03)
+        )
+        if degraded_social_portrait:
+            social_filter_score += 0.2
+
+        social_color_filter_detected = bool(social_filter_score >= 0.42 and not is_monochrome)
+        if social_filter_score >= 0.9:
+            social_filter_strength = "high"
+        elif social_filter_score >= 0.62:
+            social_filter_strength = "medium"
+        elif social_color_filter_detected:
+            social_filter_strength = "low"
+        else:
+            social_filter_strength = "none"
+
         filter_score = 0.0
         if saturation > 120:
             filter_score += 0.55
@@ -295,6 +354,8 @@ class ImageAnalyzer:
             filter_score += 0.22
         if old_photo_detected or scan_artifacts_detected:
             filter_score += 0.2
+        if social_color_filter_detected:
+            filter_score += 0.32
 
         filter_detected = filter_score >= 0.45 and not is_monochrome
         if filter_score >= 0.95:
@@ -309,12 +370,17 @@ class ImageAnalyzer:
         return {
             "filter_detected": bool(filter_detected),
             "filter_strength": filter_strength,
+            "social_color_filter_detected": bool(social_color_filter_detected),
+            "social_filter_strength": social_filter_strength,
+            "degraded_social_portrait": bool(degraded_social_portrait),
             "is_monochrome": bool(is_monochrome),
             "monochrome_confidence": monochrome_confidence,
             "old_photo_detected": bool(old_photo_detected),
             "scan_artifacts_detected": bool(scan_artifacts_detected),
             "scratch_score": float(np.clip(scratch_ratio, 0.0, 1.0)),
-            "recommended_filter_restoration": bool(filter_detected or old_photo_detected or scan_artifacts_detected),
+            "recommended_color_filter_correction": bool(social_color_filter_detected or degraded_social_portrait or filter_detected),
+            "recommended_old_photo_restore": bool(old_photo_detected or scan_artifacts_detected),
+            "recommended_filter_restoration": bool(filter_detected or old_photo_detected or scan_artifacts_detected or social_color_filter_detected),
             "recommended_bw_restore": bool(is_monochrome)
         }
 

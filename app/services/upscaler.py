@@ -344,52 +344,71 @@ class RealESRGANUpscaler:
         """
         Reduce dominantes de filtro (saturación/curva) para recuperar aspecto natural.
         """
-        if not profile.get("remove_filter"):
+        apply_color_filter_correction = bool(profile.get("remove_color_filter", profile.get("remove_filter", False)))
+        apply_old_photo_restore = bool(profile.get("restore_old_photo", False))
+
+        if not apply_color_filter_correction and not apply_old_photo_restore:
             return img, False
 
         img = self._ensure_bgr_uint8(img)
-        filter_strength = profile.get("filter_strength", "medium")
+        filter_strength = profile.get("social_filter_strength", profile.get("filter_strength", "medium"))
 
-        if filter_strength == "high":
-            saturation_factor = 0.78
-            wb_blend = 0.42
-        elif filter_strength == "low":
-            saturation_factor = 0.9
-            wb_blend = 0.26
-        else:
-            saturation_factor = 0.84
-            wb_blend = 0.34
+        working = img.copy()
+        applied = False
 
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
-        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation_factor, 0, 255)
-        filter_reduced = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+        if apply_color_filter_correction:
+            if filter_strength == "high":
+                saturation_factor = 0.8
+                wb_blend = 0.44
+            elif filter_strength == "low":
+                saturation_factor = 0.91
+                wb_blend = 0.24
+            else:
+                saturation_factor = 0.86
+                wb_blend = 0.33
 
-        # Balance de blancos suave (gray-world) para neutralizar cast.
-        b, g, r = cv2.split(filter_reduced.astype(np.float32))
-        mean_b = float(np.mean(b))
-        mean_g = float(np.mean(g))
-        mean_r = float(np.mean(r))
-        gray_mean = max(1.0, (mean_b + mean_g + mean_r) / 3.0)
-        b *= gray_mean / max(1.0, mean_b)
-        g *= gray_mean / max(1.0, mean_g)
-        r *= gray_mean / max(1.0, mean_r)
-        balanced = cv2.merge([
-            np.clip(b, 0, 255),
-            np.clip(g, 0, 255),
-            np.clip(r, 0, 255)
-        ]).astype(np.uint8)
+            hsv = cv2.cvtColor(working, cv2.COLOR_BGR2HSV).astype(np.float32)
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation_factor, 0, 255)
+            filter_reduced = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
-        # Mezcla para conservar esencia original.
-        blended = cv2.addWeighted(filter_reduced, 1.0 - wb_blend, balanced, wb_blend, 0)
+            # Balance de blancos suave (gray-world) para neutralizar cast.
+            b, g, r = cv2.split(filter_reduced.astype(np.float32))
+            mean_b = float(np.mean(b))
+            mean_g = float(np.mean(g))
+            mean_r = float(np.mean(r))
+            gray_mean = max(1.0, (mean_b + mean_g + mean_r) / 3.0)
+            b *= gray_mean / max(1.0, mean_b)
+            g *= gray_mean / max(1.0, mean_g)
+            r *= gray_mean / max(1.0, mean_r)
+            balanced = cv2.merge([
+                np.clip(b, 0, 255),
+                np.clip(g, 0, 255),
+                np.clip(r, 0, 255)
+            ]).astype(np.uint8)
 
-        if profile.get("old_photo_detected") or profile.get("scan_artifacts_detected"):
-            lab = cv2.cvtColor(blended, cv2.COLOR_BGR2LAB)
+            # Mezcla para conservar esencia original.
+            working = cv2.addWeighted(filter_reduced, 1.0 - wb_blend, balanced, wb_blend, 0)
+            applied = True
+
+        if apply_old_photo_restore:
+            lab = cv2.cvtColor(working, cv2.COLOR_BGR2LAB)
             l, a, bch = cv2.split(lab)
             clahe = cv2.createCLAHE(clipLimit=1.65, tileGridSize=(8, 8))
             l = clahe.apply(l)
-            blended = cv2.cvtColor(cv2.merge([l, a, bch]), cv2.COLOR_LAB2BGR)
+            working = cv2.cvtColor(cv2.merge([l, a, bch]), cv2.COLOR_LAB2BGR)
 
-        return blended, True
+            scratch_score = float(profile.get("scratch_score", 0.0))
+            if scratch_score > 0.18:
+                gray = cv2.cvtColor(working, cv2.COLOR_BGR2GRAY)
+                blackhat_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 13))
+                scratches = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, blackhat_kernel)
+                _, scratch_mask = cv2.threshold(scratches, 18, 255, cv2.THRESH_BINARY)
+                scratch_mask = cv2.dilate(scratch_mask, np.ones((2, 2), np.uint8), iterations=1)
+                working = cv2.inpaint(working, scratch_mask, 2, cv2.INPAINT_TELEA)
+
+            applied = True
+
+        return working, applied
 
     def _restore_monochrome_photo(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, bool]:
         """
@@ -453,13 +472,18 @@ class RealESRGANUpscaler:
         """Aplica restauraciones opcionales previas al escalado."""
         metadata = {
             "filter_restoration_applied": False,
+            "old_photo_restoration_applied": False,
             "bw_restoration_applied": False
         }
 
         working = self._ensure_bgr_uint8(img)
 
+        requested_color_restore = bool(profile.get("remove_color_filter", profile.get("remove_filter", False)))
+        requested_old_photo_restore = bool(profile.get("restore_old_photo", False))
+
         working, filter_applied = self._apply_filter_reduction(working, profile)
-        metadata["filter_restoration_applied"] = bool(filter_applied)
+        metadata["filter_restoration_applied"] = bool(filter_applied and requested_color_restore)
+        metadata["old_photo_restoration_applied"] = bool(filter_applied and requested_old_photo_restore)
 
         working, bw_applied = self._restore_monochrome_photo(working, profile)
         metadata["bw_restoration_applied"] = bool(bw_applied)
@@ -763,6 +787,7 @@ class RealESRGANUpscaler:
             "safe_pre_resize_factor": round(pre_resize_factor, 3),
             "safe_mode_output_downscaled": safe_mode_output_downscaled,
             "filter_restoration_applied": preprocess_metadata.get("filter_restoration_applied", False),
+            "old_photo_restoration_applied": preprocess_metadata.get("old_photo_restoration_applied", False),
             "bw_restoration_applied": preprocess_metadata.get("bw_restoration_applied", False)
         }
 
@@ -800,6 +825,9 @@ class RealESRGANUpscaler:
 
         if lighting == "low_light":
             base_amount *= 0.75
+
+        if bool(profile.get("degraded_social_portrait", False)):
+            base_amount *= 0.72
 
         detail_amount = float(np.clip(base_amount, 0.05, 0.2))
 

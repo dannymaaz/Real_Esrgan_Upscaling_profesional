@@ -74,7 +74,7 @@ def _should_force_png_output(input_filename: str, analysis: dict) -> bool:
     """Devuelve True cuando conviene guardar resultado como PNG."""
     source_format = str(analysis.get("source_info", {}).get("format", "")).upper()
     extension = Path(input_filename).suffix.lower()
-    return source_format == "WEBP" or extension == ".webp"
+    return source_format in {"WEBP", "HEIC", "HEIF"} or extension in {".webp", ".heic", ".heif"}
 
 
 @router.post("/analyze")
@@ -121,6 +121,8 @@ async def upscale_image(
     face_enhance: bool = Form(False),
     forced_image_type: Optional[str] = Form(None),
     remove_filter: bool = Form(False),
+    remove_color_filter: bool = Form(False),
+    restore_old_photo: bool = Form(False),
     dual_output: bool = Form(False),
     restore_bw: bool = Form(False)
 ):
@@ -186,17 +188,25 @@ async def upscale_image(
         effective_face_enhance = face_enhance
         cpu_fallback_note = None
 
-        can_restore_filter = bool(
-            analysis.get("recommended_filter_restoration")
+        can_restore_color_filter = bool(
+            analysis.get("recommended_color_filter_correction")
+            or analysis.get("recommended_filter_restoration")
+            analysis.get("social_color_filter_detected")
             or analysis.get("filter_detected")
-            or analysis.get("old_photo_detected")
+            or analysis.get("degraded_social_portrait")
+        )
+        can_restore_old_photo = bool(
+            analysis.get("old_photo_detected")
             or analysis.get("scan_artifacts_detected")
         )
         can_restore_bw = bool(analysis.get("recommended_bw_restore") or analysis.get("is_monochrome"))
 
-        effective_remove_filter = bool(remove_filter and can_restore_filter)
+        # remove_filter se mantiene por compatibilidad y se interpreta como corrección de color.
+        requested_color_filter_correction = bool(remove_color_filter or remove_filter)
+        effective_remove_filter = bool(requested_color_filter_correction and can_restore_color_filter)
+        effective_restore_old_photo = bool(restore_old_photo and can_restore_old_photo)
         effective_restore_bw = bool(restore_bw and can_restore_bw)
-        effective_dual_output = bool(dual_output and (effective_remove_filter or effective_restore_bw))
+        effective_dual_output = bool(dual_output and (effective_remove_filter or effective_restore_old_photo or effective_restore_bw))
 
         # Perfil de restauración para anti artefactos y sharpen por región
         base_processing_profile = {
@@ -211,12 +221,18 @@ async def upscale_image(
             "has_faces": bool(analysis.get("has_faces", False)),
             "face_importance": analysis.get("face_importance", "low"),
             "source_info": analysis.get("source_info", {}),
+            "degraded_social_portrait": bool(analysis.get("degraded_social_portrait", False)),
+            "social_color_filter_detected": bool(analysis.get("social_color_filter_detected", False)),
+            "social_filter_strength": analysis.get("social_filter_strength", "none"),
             "filter_strength": analysis.get("filter_strength", "none"),
             "is_monochrome": bool(analysis.get("is_monochrome", False)),
             "old_photo_detected": bool(analysis.get("old_photo_detected", False)),
             "scan_artifacts_detected": bool(analysis.get("scan_artifacts_detected", False)),
+            "scratch_score": float(analysis.get("scratch_score", 0.0)),
             "safe_pre_resize": True,
             "remove_filter": effective_remove_filter,
+            "remove_color_filter": effective_remove_filter,
+            "restore_old_photo": effective_restore_old_photo,
             "restore_monochrome": effective_restore_bw
         }
 
@@ -263,6 +279,8 @@ async def upscale_image(
                     "processing_profile": {
                         **base_processing_profile,
                         "remove_filter": False,
+                        "remove_color_filter": False,
+                        "restore_old_photo": False,
                         "restore_monochrome": False
                     },
                     "default": False
@@ -273,6 +291,8 @@ async def upscale_image(
                     "processing_profile": {
                         **base_processing_profile,
                         "remove_filter": effective_remove_filter,
+                        "remove_color_filter": effective_remove_filter,
+                        "restore_old_photo": effective_restore_old_photo,
                         "restore_monochrome": effective_restore_bw
                     },
                     "default": True
@@ -390,8 +410,12 @@ async def upscale_image(
         result["analysis_image_type"] = analyzed_image_type
         result["effective_image_type"] = effective_image_type
         result["requested_remove_filter"] = bool(remove_filter)
+        result["requested_remove_color_filter"] = bool(remove_color_filter)
+        result["requested_restore_old_photo"] = bool(restore_old_photo)
         result["requested_restore_bw"] = bool(restore_bw)
+        result["color_filter_correction_enabled"] = effective_remove_filter
         result["filter_restoration_enabled"] = effective_remove_filter
+        result["old_photo_restoration_enabled"] = effective_restore_old_photo
         result["bw_restoration_enabled"] = effective_restore_bw
         result["dual_output_enabled"] = effective_dual_output
         result["type_overridden"] = bool(normalized_forced_type and normalized_forced_type != analyzed_image_type)

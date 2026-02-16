@@ -78,6 +78,7 @@ function initializeEventListeners() {
     const toggleQueueViewBtn = document.getElementById('toggleQueueViewBtn');
     const toggleHistoryViewBtn = document.getElementById('toggleHistoryViewBtn');
     const removeFilterBtn = document.getElementById('removeFilterBtn');
+    const restoreOldPhotoBtn = document.getElementById('restoreOldPhotoBtn');
     const dualOutputContainer = document.getElementById('dualOutputContainer');
     const dualOutputBtn = document.getElementById('dualOutputBtn');
     const bwRestoreBtn = document.getElementById('bwRestoreBtn');
@@ -115,6 +116,7 @@ function initializeEventListeners() {
             const job = getSelectedJob();
             if (job) {
                 job.options.scale = selectedScale;
+                job.estimatedDurationSec = estimateDurationSeconds(job.analysis, job.options);
                 jobs.set(job.id, job);
                 renderQueuePanel();
             }
@@ -151,8 +153,8 @@ function initializeEventListeners() {
         removeFilterBtn.addEventListener('change', () => {
             const selected = getSelectedJob();
             if (selected) {
-                selected.options.removeFilter = Boolean(removeFilterBtn.checked);
-                if (!(selected.options.removeFilter || selected.options.restoreMonochrome)) {
+                selected.options.removeColorFilter = Boolean(removeFilterBtn.checked);
+                if (!(selected.options.removeColorFilter || selected.options.restoreOldPhoto || selected.options.restoreMonochrome)) {
                     selected.options.dualOutput = false;
                 }
                 selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
@@ -165,11 +167,33 @@ function initializeEventListeners() {
         });
     }
 
+    if (restoreOldPhotoBtn) {
+        restoreOldPhotoBtn.addEventListener('change', () => {
+            const selected = getSelectedJob();
+            if (!selected) {
+                refreshDualOutputVisibilityForJob(null);
+                return;
+            }
+
+            selected.options.restoreOldPhoto = Boolean(restoreOldPhotoBtn.checked);
+            if (!(selected.options.removeColorFilter || selected.options.restoreOldPhoto || selected.options.restoreMonochrome)) {
+                selected.options.dualOutput = false;
+            }
+            selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
+            jobs.set(selected.id, selected);
+            refreshDualOutputVisibilityForJob(selected);
+            renderQueuePanel();
+        });
+    }
+
     if (dualOutputBtn) {
         dualOutputBtn.addEventListener('change', () => {
             const selected = getSelectedJob();
             if (!selected) return;
-            selected.options.dualOutput = Boolean(dualOutputBtn.checked && (selected.options.removeFilter || selected.options.restoreMonochrome));
+            selected.options.dualOutput = Boolean(
+                dualOutputBtn.checked
+                && (selected.options.removeColorFilter || selected.options.restoreOldPhoto || selected.options.restoreMonochrome)
+            );
             selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
             jobs.set(selected.id, selected);
             renderQueuePanel();
@@ -181,7 +205,7 @@ function initializeEventListeners() {
             const selected = getSelectedJob();
             if (!selected) return;
             selected.options.restoreMonochrome = Boolean(bwRestoreBtn.checked);
-            if (!(selected.options.removeFilter || selected.options.restoreMonochrome)) {
+            if (!(selected.options.removeColorFilter || selected.options.restoreOldPhoto || selected.options.restoreMonochrome)) {
                 selected.options.dualOutput = false;
             }
             selected.estimatedDurationSec = estimateDurationSeconds(selected.analysis, selected.options);
@@ -263,13 +287,16 @@ function estimateDurationSeconds(analysis, options) {
     if (options?.faceEnhance) {
         estimate *= 1.15;
     }
-    if (options?.removeFilter) {
+    if (options?.removeColorFilter) {
         estimate *= 1.18;
+    }
+    if (options?.restoreOldPhoto) {
+        estimate *= 1.24;
     }
     if (options?.restoreMonochrome) {
         estimate *= 1.22;
     }
-    if (options?.dualOutput && options?.removeFilter) {
+    if (options?.dualOutput && (options?.removeColorFilter || options?.restoreOldPhoto || options?.restoreMonochrome)) {
         estimate *= 1.95;
     }
 
@@ -290,7 +317,7 @@ function refreshDualOutputVisibilityForJob(job) {
     const dualOutputBtn = document.getElementById('dualOutputBtn');
     if (!dualOutputContainer || !dualOutputBtn) return;
 
-    const canEnableDual = Boolean(job && (job.options?.removeFilter || job.options?.restoreMonochrome));
+    const canEnableDual = Boolean(job && (job.options?.removeColorFilter || job.options?.restoreOldPhoto || job.options?.restoreMonochrome));
     dualOutputContainer.style.display = canEnableDual ? 'block' : 'none';
     if (!canEnableDual) {
         dualOutputBtn.checked = false;
@@ -302,15 +329,15 @@ function validateFile(file) {
         return 'No se recibió ningún archivo.';
     }
 
-    const supportedMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
-    const supportedExtensions = ['.png', '.jpg', '.jpeg', '.webp'];
+    const supportedMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'];
+    const supportedExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.heif'];
     const extension = file.name ? `.${file.name.split('.').pop().toLowerCase()}` : '';
     const mimeType = (file.type || '').toLowerCase();
 
     const isSupportedMime = supportedMimeTypes.includes(mimeType);
     const isSupportedExtension = supportedExtensions.includes(extension);
     if (!isSupportedMime && !isSupportedExtension) {
-        return 'Este archivo no es compatible por ahora. Formatos soportados: PNG, JPG, JPEG, WEBP.';
+        return 'Este archivo no es compatible por ahora. Formatos soportados: PNG, JPG, JPEG, WEBP, HEIC y HEIF.';
     }
 
     const maxSize = 20 * 1024 * 1024;
@@ -344,7 +371,7 @@ async function handleFileSelect(file) {
             progress: 0,
             progressMessage: 'Lista para encolar',
             startedAt: null,
-            estimatedDurationSec: estimateDurationSeconds(analysis, { scale: `${analysis.recommended_scale}x`, faceEnhance: false, removeFilter: false, dualOutput: false, restoreMonochrome: false }),
+            estimatedDurationSec: estimateDurationSeconds(analysis, { scale: `${analysis.recommended_scale}x`, faceEnhance: false, removeColorFilter: false, restoreOldPhoto: false, dualOutput: false, restoreMonochrome: false }),
             analysis,
             result: null,
             error: null,
@@ -352,7 +379,8 @@ async function handleFileSelect(file) {
                 scale: `${analysis.recommended_scale}x`,
                 faceEnhance: false,
                 forcedImageType: null,
-                removeFilter: false,
+                removeColorFilter: false,
+                restoreOldPhoto: false,
                 dualOutput: false,
                 restoreMonochrome: false
             }
@@ -385,21 +413,36 @@ function applyJobControls(job, showPanel = true) {
 
     const removeFilterBtn = document.getElementById('removeFilterBtn');
     const filterRestoreContainer = document.getElementById('filterRestoreContainer');
+    const restoreOldPhotoBtn = document.getElementById('restoreOldPhotoBtn');
+    const oldPhotoRestoreContainer = document.getElementById('oldPhotoRestoreContainer');
     const dualOutputContainer = document.getElementById('dualOutputContainer');
     const dualOutputBtn = document.getElementById('dualOutputBtn');
     const bwRestoreContainer = document.getElementById('bwRestoreContainer');
     const bwRestoreBtn = document.getElementById('bwRestoreBtn');
 
-    const canRestoreFilter = Boolean(job.analysis.filter_detected || job.analysis.old_photo_detected || job.analysis.scan_artifacts_detected);
+    const canColorFilterCorrection = Boolean(
+        job.analysis.social_color_filter_detected
+        || job.analysis.filter_detected
+        || job.analysis.degraded_social_portrait
+    );
+    const canRestoreOldPhoto = Boolean(job.analysis.old_photo_detected || job.analysis.scan_artifacts_detected);
     const canRestoreBw = Boolean(job.analysis.is_monochrome);
 
     if (filterRestoreContainer && removeFilterBtn) {
-        filterRestoreContainer.style.display = canRestoreFilter ? 'block' : 'none';
-        removeFilterBtn.checked = canRestoreFilter && Boolean(job.options.removeFilter);
+        filterRestoreContainer.style.display = canColorFilterCorrection ? 'block' : 'none';
+        removeFilterBtn.checked = canColorFilterCorrection && Boolean(job.options.removeColorFilter);
+    }
+
+    if (oldPhotoRestoreContainer && restoreOldPhotoBtn) {
+        oldPhotoRestoreContainer.style.display = canRestoreOldPhoto ? 'block' : 'none';
+        restoreOldPhotoBtn.checked = canRestoreOldPhoto && Boolean(job.options.restoreOldPhoto);
     }
 
     if (dualOutputContainer && dualOutputBtn) {
-        const canEnableDual = (canRestoreFilter && Boolean(job.options.removeFilter)) || (canRestoreBw && Boolean(job.options.restoreMonochrome));
+        const canEnableDual =
+            (canColorFilterCorrection && Boolean(job.options.removeColorFilter))
+            || (canRestoreOldPhoto && Boolean(job.options.restoreOldPhoto))
+            || (canRestoreBw && Boolean(job.options.restoreMonochrome));
         dualOutputContainer.style.display = canEnableDual ? 'block' : 'none';
         dualOutputBtn.checked = canEnableDual && Boolean(job.options.dualOutput);
     }
@@ -462,15 +505,21 @@ function syncSelectedJobOptionsFromUI() {
     const activeScaleBtn = document.querySelector('.scale-btn.active');
     const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
     const removeFilterBtn = document.getElementById('removeFilterBtn');
+    const restoreOldPhotoBtn = document.getElementById('restoreOldPhotoBtn');
     const dualOutputBtn = document.getElementById('dualOutputBtn');
     const bwRestoreBtn = document.getElementById('bwRestoreBtn');
 
     job.options.scale = activeScaleBtn ? activeScaleBtn.dataset.scale : job.options.scale;
     job.options.faceEnhance = Boolean(faceEnhanceBtn && faceEnhanceBtn.checked);
     job.options.forcedImageType = getForcedImageTypeFromUI(job.analysis);
-    job.options.removeFilter = Boolean(removeFilterBtn && removeFilterBtn.checked);
+    job.options.removeColorFilter = Boolean(removeFilterBtn && removeFilterBtn.checked);
+    job.options.restoreOldPhoto = Boolean(restoreOldPhotoBtn && restoreOldPhotoBtn.checked);
     job.options.restoreMonochrome = Boolean(bwRestoreBtn && bwRestoreBtn.checked && job.analysis?.is_monochrome);
-    job.options.dualOutput = Boolean(dualOutputBtn && dualOutputBtn.checked && (job.options.removeFilter || job.options.restoreMonochrome));
+    job.options.dualOutput = Boolean(
+        dualOutputBtn
+        && dualOutputBtn.checked
+        && (job.options.removeColorFilter || job.options.restoreOldPhoto || job.options.restoreMonochrome)
+    );
     job.estimatedDurationSec = estimateDurationSeconds(job.analysis, job.options);
     job.updatedAt = Date.now();
 
@@ -557,7 +606,8 @@ async function runQueueWorker() {
                 job.options.faceEnhance,
                 job.options.forcedImageType,
                 {
-                    removeFilter: job.options.removeFilter,
+                    removeColorFilter: job.options.removeColorFilter,
+                    restoreOldPhoto: job.options.restoreOldPhoto,
                     dualOutput: job.options.dualOutput,
                     restoreMonochrome: job.options.restoreMonochrome
                 }
@@ -813,7 +863,7 @@ function renderQueuePanel() {
 
             const isActive = selectedJobId === job.id;
             const dimensions = `${job.analysis.width}x${job.analysis.height}`;
-            const optionMeta = `${job.options.scale} · Rostro ${job.options.faceEnhance ? 'ON' : 'OFF'}${job.options.removeFilter ? ' · Filtro OFF' : ''}${job.options.restoreMonochrome ? ' · B/N restore' : ''}${job.options.dualOutput ? ' · Doble salida' : ''}`;
+            const optionMeta = `${job.options.scale} · Rostro ${job.options.faceEnhance ? 'ON' : 'OFF'}${job.options.removeColorFilter ? ' · Color correction' : ''}${job.options.restoreOldPhoto ? ' · Old-photo restore' : ''}${job.options.restoreMonochrome ? ' · B/N restore' : ''}${job.options.dualOutput ? ' · Doble salida' : ''}`;
 
             const actionButtons = [];
             actionButtons.push(`<button class="mini-btn" data-action="select" data-job-id="${job.id}">Abrir</button>`);

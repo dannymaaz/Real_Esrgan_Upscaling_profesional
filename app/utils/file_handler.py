@@ -6,10 +6,19 @@ Autor: Danny Maaz (github.com/dannymaaz)
 import os
 import uuid
 import aiofiles
+import importlib
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from fastapi import UploadFile, HTTPException
+from PIL import Image
+
+try:
+    pillow_heif = importlib.import_module("pillow_heif")
+    pillow_heif.register_heif_opener()
+    HAS_HEIF_SUPPORT = True
+except Exception:
+    HAS_HEIF_SUPPORT = False
 
 from app.config import (
     UPLOADS_DIR,
@@ -62,6 +71,43 @@ def generate_unique_filename(original_filename: str) -> str:
     unique_id = uuid.uuid4().hex[:12]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{timestamp}_{unique_id}{extension}"
+
+
+def _convert_heic_to_png(file_path: Path) -> Tuple[str, Path]:
+    """Convierte HEIC/HEIF a PNG para compatibilidad de pipeline."""
+    extension = get_file_extension(file_path.name)
+    if extension not in {".heic", ".heif"}:
+        return file_path.name, file_path
+
+    if not HAS_HEIF_SUPPORT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El formato HEIC/HEIF requiere soporte adicional. "
+                "Instala dependencias ejecutando: pip install pillow-heif"
+            )
+        )
+
+    png_filename = f"{file_path.stem}.png"
+    png_path = file_path.with_suffix(".png")
+
+    try:
+        with Image.open(file_path) as src:
+            rgb = src.convert("RGB")
+            rgb.save(png_path, format="PNG", optimize=True)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se pudo convertir archivo HEIC/HEIF: {str(e)}"
+        )
+
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except Exception:
+        pass
+
+    return png_filename, png_path
 
 
 async def save_upload_file(upload_file: UploadFile) -> Tuple[str, Path]:
@@ -126,6 +172,9 @@ async def save_upload_file(upload_file: UploadFile) -> Tuple[str, Path]:
             file_path.unlink()
         raise
     
+    # Convertir HEIC/HEIF a PNG para asegurar compatibilidad total con OpenCV/Real-ESRGAN.
+    filename, file_path = _convert_heic_to_png(file_path)
+
     return filename, file_path
 
 

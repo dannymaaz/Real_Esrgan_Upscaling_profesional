@@ -81,8 +81,12 @@ class APIClient {
             formData.append('forced_image_type', forcedImageType);
         }
 
-        if (extraOptions?.removeFilter) {
+        if (extraOptions?.removeColorFilter) {
             formData.append('remove_filter', 'true');
+            formData.append('remove_color_filter', 'true');
+        }
+        if (extraOptions?.restoreOldPhoto) {
+            formData.append('restore_old_photo', 'true');
         }
         if (extraOptions?.dualOutput) {
             formData.append('dual_output', 'true');

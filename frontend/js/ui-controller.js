@@ -29,9 +29,11 @@ class UIController {
 
         const filterState = document.getElementById('imageFilterState');
         if (filterState) {
-            if (analysis.filter_detected) {
-                const strength = analysis.filter_strength || 'medium';
-                filterState.textContent = `Sí (${strength})`;
+            if (analysis.social_color_filter_detected || analysis.filter_detected) {
+                const strength = analysis.social_filter_strength || analysis.filter_strength || 'medium';
+                filterState.textContent = `Sí, color (${strength})`;
+            } else if (analysis.old_photo_detected || analysis.scan_artifacts_detected) {
+                filterState.textContent = 'Sí, antigua/escaneo';
             } else if (analysis.is_monochrome) {
                 filterState.textContent = 'Blanco y negro detectado';
             } else {
@@ -97,22 +99,43 @@ class UIController {
         const filterRestoreContainer = document.getElementById('filterRestoreContainer');
         const removeFilterBtn = document.getElementById('removeFilterBtn');
         const filterRestoreDescription = document.getElementById('filterRestoreDescription');
+        const oldPhotoRestoreContainer = document.getElementById('oldPhotoRestoreContainer');
+        const restoreOldPhotoBtn = document.getElementById('restoreOldPhotoBtn');
+        const oldPhotoRestoreDescription = document.getElementById('oldPhotoRestoreDescription');
         const dualOutputContainer = document.getElementById('dualOutputContainer');
         const dualOutputBtn = document.getElementById('dualOutputBtn');
         const bwRestoreContainer = document.getElementById('bwRestoreContainer');
         const bwRestoreBtn = document.getElementById('bwRestoreBtn');
 
-        const canRestoreFilter = Boolean(analysis.filter_detected || analysis.old_photo_detected || analysis.scan_artifacts_detected);
+        const canRestoreColorFilter = Boolean(
+            analysis.recommended_color_filter_correction
+            || analysis.social_color_filter_detected
+            || analysis.filter_detected
+            || analysis.degraded_social_portrait
+        );
+        const canRestoreOldPhoto = Boolean(
+            analysis.recommended_old_photo_restore
+            || analysis.old_photo_detected
+            || analysis.scan_artifacts_detected
+        );
         if (filterRestoreContainer && removeFilterBtn) {
-            filterRestoreContainer.style.display = canRestoreFilter ? 'block' : 'none';
+            filterRestoreContainer.style.display = canRestoreColorFilter ? 'block' : 'none';
             removeFilterBtn.checked = false;
 
             if (filterRestoreDescription) {
-                if (analysis.old_photo_detected || analysis.scan_artifacts_detected) {
-                    filterRestoreDescription.textContent = 'Ideal para fotos antiguas/escaneadas con dominante de color, polvo o bajo contraste.';
+                if (analysis.degraded_social_portrait) {
+                    filterRestoreDescription.textContent = 'Retrato social degradado detectado: corrige dominante de color y contraste para un look más natural.';
                 } else {
-                    filterRestoreDescription.textContent = 'Mejora tono, contraste y color para recuperar naturalidad antes del escalado.';
+                    filterRestoreDescription.textContent = 'Corrige dominante de color, saturación y contraste de filtros modernos (Instagram/iPhone/Snapchat).';
                 }
+            }
+        }
+
+        if (oldPhotoRestoreContainer && restoreOldPhotoBtn) {
+            oldPhotoRestoreContainer.style.display = canRestoreOldPhoto ? 'block' : 'none';
+            restoreOldPhotoBtn.checked = false;
+            if (oldPhotoRestoreDescription) {
+                oldPhotoRestoreDescription.textContent = 'Ideal para fotos antiguas o escaneadas con desvanecimiento, rayones, polvo y bajo contraste.';
             }
         }
 
@@ -338,8 +361,12 @@ class UIController {
                 <span class="info-value">${data.face_enhance ? 'Sí' : 'No'}</span>
             </div>
             <div class="info-row">
-                <span class="info-label">Restauración filtro:</span>
+                <span class="info-label">Corrección color:</span>
                 <span class="info-value">${data.filter_restoration_applied ? 'Aplicada' : 'No'}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Restauración antigua:</span>
+                <span class="info-value">${data.old_photo_restoration_applied ? 'Aplicada' : 'No'}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Restauración B/N:</span>
