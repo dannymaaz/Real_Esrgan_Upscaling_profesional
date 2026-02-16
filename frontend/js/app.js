@@ -125,17 +125,10 @@ async function handleFileSelect(file) {
         // Seleccionar escala recomendada por defecto
         selectedScale = `${currentAnalysis.recommended_scale}x`;
 
-        // AUTO-DETECCIÓN DE ROSTROS
+        // Por defecto, mantener GFPGAN desactivado para preservar naturalidad.
         const faceEnhanceBtn = document.getElementById('faceEnhanceBtn');
         if (faceEnhanceBtn) {
-            // Activar automáticamente solo con rostros relevantes (evita falsos positivos)
-            const importantFaceDetected = currentAnalysis.has_faces &&
-                ['medium', 'high'].includes(currentAnalysis.face_importance);
-            if (importantFaceDetected) {
-                faceEnhanceBtn.checked = true;
-            } else {
-                faceEnhanceBtn.checked = false;
-            }
+            faceEnhanceBtn.checked = false;
         }
 
     } catch (error) {

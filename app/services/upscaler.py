@@ -9,7 +9,7 @@ import torch
 import numpy as np
 import random
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 from basicsr.archs.rrdbnet_arch import RRDBNet
 from realesrgan import RealESRGANer
 from realesrgan.archs.srvgg_arch import SRVGGNetCompact
@@ -41,6 +41,12 @@ class RealESRGANUpscaler:
         self.models: Dict[str, RealESRGANer] = {}
         self.face_enhancer = None
         self.device = self._detect_device()
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+        self.profile_face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_profileface.xml'
+        )
         
     def _load_face_enhancer(self, scale: int, bg_upsampler=None):
         """
@@ -105,10 +111,15 @@ class RealESRGANUpscaler:
             
         return float(np.clip(weight, 0.04, 0.22))
 
-    def _merge_face_enhancement(self, base_img: np.ndarray, enhanced_img: np.ndarray) -> np.ndarray:
+    def _merge_face_enhancement(
+        self,
+        base_img: np.ndarray,
+        enhanced_img: np.ndarray,
+        face_boxes: Optional[List[Tuple[int, int, int, int]]] = None
+    ) -> np.ndarray:
         """
-        Mezcla conservadora solo donde GFPGAN cambió realmente la imagen (normalmente rostro).
-        Evita afectar ropa/fondo y reduce look plástico global.
+        Mezcla conservadora de GFPGAN restringida a zonas de rostro.
+        Evita alterar ropa/fondo para mantener resultado natural.
         """
         base_img = self._ensure_bgr_uint8(base_img)
         enhanced_img = self._ensure_bgr_uint8(enhanced_img)
@@ -116,16 +127,116 @@ class RealESRGANUpscaler:
         if base_img.shape != enhanced_img.shape:
             return enhanced_img
 
+        # Si no logramos ubicar rostros, no aplicar mezcla global.
+        if not face_boxes:
+            return base_img
+
         diff = cv2.absdiff(base_img, enhanced_img)
         diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
         _, changed = cv2.threshold(diff_gray, 5, 255, cv2.THRESH_BINARY)
         changed = cv2.dilate(changed, np.ones((5, 5), np.uint8), iterations=1)
-        changed = cv2.GaussianBlur(changed, (0, 0), 2.0)
-        alpha = (changed.astype(np.float32) / 255.0) * 0.45
+
+        h, w = diff_gray.shape
+        face_mask = np.zeros((h, w), dtype=np.uint8)
+        for x, y, fw, fh in face_boxes:
+            expand_x = int(fw * 0.24)
+            expand_y = int(fh * 0.32)
+            x1 = max(0, x - expand_x)
+            y1 = max(0, y - expand_y)
+            x2 = min(w, x + fw + expand_x)
+            y2 = min(h, y + fh + expand_y)
+            cv2.rectangle(face_mask, (x1, y1), (x2, y2), 255, -1)
+
+        face_mask = cv2.GaussianBlur(face_mask, (0, 0), 4.5).astype(np.float32) / 255.0
+        changed_soft = cv2.GaussianBlur(changed, (0, 0), 2.0).astype(np.float32) / 255.0
+
+        alpha = np.clip(changed_soft * face_mask, 0.0, 1.0) * 0.52
         alpha_3c = np.repeat(alpha[:, :, None], 3, axis=2)
 
         merged = base_img.astype(np.float32) * (1.0 - alpha_3c) + enhanced_img.astype(np.float32) * alpha_3c
         return np.clip(merged, 0, 255).astype(np.uint8)
+
+    def _detect_face_boxes(self, img: np.ndarray) -> List[Tuple[int, int, int, int]]:
+        """Detecta cajas de rostro para limitar mezcla de GFPGAN."""
+        img = self._ensure_bgr_uint8(img)
+
+        if self.face_cascade.empty():
+            return []
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        min_face = max(24, int(min(h, w) * 0.04))
+
+        detections: List[Tuple[int, int, int, int]] = []
+
+        primary = self.face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.08,
+            minNeighbors=5,
+            minSize=(min_face, min_face)
+        )
+        detections.extend([(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in primary])
+
+        relaxed = self.face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.05,
+            minNeighbors=4,
+            minSize=(max(20, int(min_face * 0.85)), max(20, int(min_face * 0.85)))
+        )
+        detections.extend([(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in relaxed])
+
+        if not self.profile_face_cascade.empty():
+            profile = self.profile_face_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.06,
+                minNeighbors=5,
+                minSize=(max(20, int(min_face * 0.85)), max(20, int(min_face * 0.85)))
+            )
+            detections.extend([(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in profile])
+
+        return self._deduplicate_boxes(detections)
+
+    def _deduplicate_boxes(self, boxes: List[Tuple[int, int, int, int]]) -> List[Tuple[int, int, int, int]]:
+        """Elimina detecciones casi duplicadas usando IoU."""
+        if not boxes:
+            return []
+
+        boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
+        selected: List[Tuple[int, int, int, int]] = []
+
+        for candidate in boxes:
+            keep = True
+            for chosen in selected:
+                if self._box_iou(candidate, chosen) > 0.35:
+                    keep = False
+                    break
+            if keep:
+                selected.append(candidate)
+
+        return selected
+
+    def _box_iou(self, a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
+        """Calcula IoU entre dos bounding boxes (x, y, w, h)."""
+        ax1, ay1, aw, ah = a
+        bx1, by1, bw, bh = b
+        ax2, ay2 = ax1 + aw, ay1 + ah
+        bx2, by2 = bx1 + bw, by1 + bh
+
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+
+        inter_w = max(0, inter_x2 - inter_x1)
+        inter_h = max(0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h
+
+        if inter_area <= 0:
+            return 0.0
+
+        area_a = aw * ah
+        area_b = bw * bh
+        return inter_area / max(1e-6, (area_a + area_b - inter_area))
         
     def _detect_device(self) -> str:
         """
@@ -178,6 +289,32 @@ class RealESRGANUpscaler:
                 num_grow_ch=32,
                 scale=4
             )
+
+    def _configure_runtime_tiling(self, upsampler: RealESRGANer, total_pixels: int):
+        """
+        Ajusta tile dinámicamente para evitar OOM y permitir más fotos en 4x.
+        """
+        runtime_tile = TILE_SIZE
+
+        if self.device == 'cpu':
+            if total_pixels > 10_000_000:
+                runtime_tile = min(runtime_tile, 160)
+            elif total_pixels > 6_000_000:
+                runtime_tile = min(runtime_tile, 192)
+            elif total_pixels > 3_000_000:
+                runtime_tile = min(runtime_tile, 256)
+        else:
+            if total_pixels > 18_000_000:
+                runtime_tile = min(runtime_tile, 160)
+            elif total_pixels > 10_000_000:
+                runtime_tile = min(runtime_tile, 192)
+            elif total_pixels > 5_000_000:
+                runtime_tile = min(runtime_tile, 256)
+
+        try:
+            setattr(upsampler, "tile", runtime_tile)
+        except Exception:
+            pass
     
     def load_model(self, model_key: str) -> RealESRGANer:
         """
@@ -298,14 +435,16 @@ class RealESRGANUpscaler:
         total_pixels = original_width * original_height
 
         # VALIDACIÓN DE DIMENSIONES PARA EVITAR ERRORES DE MEMORIA
-        max_dimension = 4000  # Límite máximo por dimensión
+        max_input_dimension = 6200 if self.device == 'cuda' else 4800
+        max_output_dimension = 12400 if self.device == 'cuda' else 9600
+        max_output_pixels = 140_000_000 if self.device == 'cuda' else 75_000_000
         scale = MODELS[model_key]["scale"]
         
         # Verificar dimensiones originales
-        if original_width > max_dimension or original_height > max_dimension:
+        if original_width > max_input_dimension or original_height > max_input_dimension:
             raise ValueError(
                 f"Imagen demasiado grande ({original_width}x{original_height}). "
-                f"Dimensión máxima permitida: {max_dimension}px. "
+                f"Dimensión máxima permitida: {max_input_dimension}px. "
                 f"Por favor, reduce el tamaño de la imagen antes de procesarla."
             )
         
@@ -313,15 +452,21 @@ class RealESRGANUpscaler:
         output_width = original_width * scale
         output_height = original_height * scale
         
-        if output_width > max_dimension * 2 or output_height > max_dimension * 2:
+        if (
+            output_width > max_output_dimension
+            or output_height > max_output_dimension
+            or (output_width * output_height) > max_output_pixels
+        ):
             raise ValueError(
                 f"La imagen escalada sería demasiado grande ({output_width}x{output_height}). "
+                f"Límite actual aproximado: {max_output_dimension}px por lado. "
                 f"Considera usar una escala menor (2x en lugar de 4x)."
             )
         
         # Estimar uso de memoria (aproximado) con más margen
         estimated_memory_mb = (original_width * original_height * 3 * scale * scale * 4) / (1024 * 1024) # *4 bytes (float32)
-        if estimated_memory_mb > 3000:  # ~3GB
+        memory_limit_mb = 7000 if self.device == 'cuda' else 4500
+        if estimated_memory_mb > memory_limit_mb:
             raise ValueError(
                 f"Esta imagen requiere demasiada memoria (~{estimated_memory_mb:.0f}MB). "
                 f"Por favor, usa una imagen más pequeña o una escala menor."
@@ -329,6 +474,9 @@ class RealESRGANUpscaler:
         
         if processing_profile is None:
             processing_profile = {}
+
+        # Ajuste dinámico de tile para mayor estabilidad y permitir más casos en 4x.
+        self._configure_runtime_tiling(upsampler, total_pixels)
 
         # Procesar upscaling
         try:
@@ -351,7 +499,8 @@ class RealESRGANUpscaler:
                         weight=face_weight
                     )
                     if face_output is not None:
-                        output = self._merge_face_enhancement(output, face_output)
+                        face_boxes = self._detect_face_boxes(output)
+                        output = self._merge_face_enhancement(output, face_output, face_boxes)
             else:
                 # Procesamiento estándar sin GFPGAN
                 output, _ = upsampler.enhance(img, outscale=MODELS[model_key]["scale"])
@@ -382,6 +531,12 @@ class RealESRGANUpscaler:
             except (MemoryError, cv2.error, ValueError, TypeError) as e:
                 print(f"Advertencia: Saltando post-proceso por error: {str(e)}")
 
+        detail_boost_applied = False
+        try:
+            output, detail_boost_applied = self._apply_photo_detail_boost(output, processing_profile)
+        except (MemoryError, cv2.error, ValueError, TypeError) as e:
+            print(f"Advertencia: Saltando detalle global por error: {str(e)}")
+
         # Guardar resultado
         try:
             cv2.imwrite(str(output_path), output)
@@ -405,8 +560,70 @@ class RealESRGANUpscaler:
             },
             "device_used": self.device,
             "face_enhance": face_enhance,
-            "postprocess_applied": postprocess_applied
+            "postprocess_applied": postprocess_applied,
+            "detail_boost_applied": detail_boost_applied
         }
+
+    def _apply_photo_detail_boost(self, img: np.ndarray, profile: Dict) -> Tuple[np.ndarray, bool]:
+        """
+        Aumenta detalle global de forma natural en fotos reales, incluso sin GFPGAN.
+        """
+        image_type = profile.get("image_type", "photo")
+        if image_type not in {"photo", "filtered_photo"}:
+            return img, False
+
+        img = self._ensure_bgr_uint8(img)
+
+        noise_level = profile.get("noise_level", "low")
+        compression_score = float(profile.get("compression_score", 0.0))
+        blur_severity = profile.get("blur_severity", "low")
+        lighting = profile.get("lighting_condition", "normal")
+
+        if image_type == "filtered_photo":
+            base_amount = 0.16
+        elif blur_severity == "strong":
+            base_amount = 0.14
+        else:
+            base_amount = 0.1
+
+        if noise_level == "high":
+            base_amount *= 0.65
+        elif noise_level == "medium":
+            base_amount *= 0.82
+
+        if compression_score > 0.65:
+            base_amount *= 0.7
+        elif compression_score > 0.45:
+            base_amount *= 0.85
+
+        if lighting == "low_light":
+            base_amount *= 0.75
+
+        detail_amount = float(np.clip(base_amount, 0.05, 0.2))
+
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(
+            clipLimit=1.45 if image_type == "filtered_photo" else 1.25,
+            tileGridSize=(8, 8)
+        )
+        l_contrast = clahe.apply(l_channel)
+        contrast_img = cv2.cvtColor(
+            cv2.merge([l_contrast, a_channel, b_channel]),
+            cv2.COLOR_LAB2BGR
+        )
+
+        blur = cv2.GaussianBlur(contrast_img, (0, 0), 1.05)
+        sharpened = cv2.addWeighted(contrast_img, 1.09, blur, -0.09, 0)
+
+        skin_mask = self._build_skin_mask(img)
+        detail_map = np.full(skin_mask.shape, detail_amount, dtype=np.float32)
+        detail_map = np.where(skin_mask > 0.2, detail_map * 0.56, detail_map)
+        detail_map = cv2.GaussianBlur(detail_map, (0, 0), 1.0)
+        detail_map_3c = np.repeat(detail_map[:, :, None], 3, axis=2)
+
+        boosted = img.astype(np.float32) * (1.0 - detail_map_3c) + sharpened.astype(np.float32) * detail_map_3c
+        return np.clip(boosted, 0, 255).astype(np.uint8), True
 
     def _apply_adaptive_artifact_reduction(self, img: np.ndarray, profile: Dict) -> np.ndarray:
         """

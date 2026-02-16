@@ -198,17 +198,8 @@ async def upscale_image(
         if resize_factor != 1.0:
             suffix += f"_resized_{scale}"
             
-        # Activación opcional de GFPGAN para rostros importantes con blur fuerte
-        auto_face_enhance = (
-            not face_enhance
-            and analysis.get("has_faces", False)
-            and analysis.get("face_importance") in {"medium", "high"}
-            and analysis.get("blur_severity") == "strong"
-        )
-        effective_face_enhance = face_enhance or auto_face_enhance
-
-        if auto_face_enhance and "_face_enhanced" not in suffix:
-            suffix += "_face_auto"
+        # Mejora facial solo cuando el usuario la activa manualmente.
+        effective_face_enhance = face_enhance
 
 
         output_filename = get_output_filename(
@@ -225,7 +216,9 @@ async def upscale_image(
             "noise_level": analysis.get("noise_level", "low"),
             "compression_score": analysis.get("compression_score", 0.0),
             "pixelation_score": analysis.get("pixelation_score", 0.0),
-            "blur_severity": analysis.get("blur_severity", "low")
+            "blur_severity": analysis.get("blur_severity", "low"),
+            "lighting_condition": analysis.get("lighting_condition", "normal"),
+            "image_type": effective_image_type
         }
 
         # Evitar modificación excesiva del rostro en fotos de buena calidad.
