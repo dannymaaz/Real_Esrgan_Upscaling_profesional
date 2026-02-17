@@ -51,6 +51,19 @@ def check_models():
     
     return True
 
+def is_port_in_use(port):
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+def find_available_port(start_port, max_attempts=10):
+    port = start_port
+    for _ in range(max_attempts):
+        if not is_port_in_use(port):
+            return port
+        port += 1
+    return None
+
 def main():
     """Ejecuta la aplicación"""
     print("=" * 60)
@@ -73,17 +86,26 @@ def main():
     # Importar configuración
     from app.config import HOST, PORT
     
+    # Detección dinámica de puerto
+    actual_port = find_available_port(PORT)
+    if not actual_port:
+        print(f"\n[!] Error: No se pudo encontrar un puerto libre cerca del {PORT}")
+        sys.exit(1)
+    
+    if actual_port != PORT:
+        print(f"\n[*] Nota: Puerto {PORT} ocupado. Usando puerto {actual_port} automáticamente.")
+
     # Iniciar servidor
     print("\n" + "=" * 60)
     print("Iniciando servidor...")
-    print(f"   URL: http://{HOST}:{PORT}")
+    print(f"   URL: http://{HOST}:{actual_port}")
     print("=" * 60)
     print("\nPresiona Ctrl+C para detener el servidor\n")
     
     # Abrir navegador después de un momento
     def open_browser():
         sleep(2)
-        webbrowser.open(f"http://{HOST}:{PORT}")
+        webbrowser.open(f"http://{HOST}:{actual_port}")
     
     import threading
     threading.Thread(target=open_browser, daemon=True).start()
@@ -94,7 +116,7 @@ def main():
         uvicorn.run(
             "app.main:app",
             host=HOST,
-            port=PORT,
+            port=actual_port,
             reload=False,
             log_level="info"
         )
@@ -104,4 +126,15 @@ def main():
         print("=" * 60)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print("\n" + "!" * 60)
+        print("ERROR CRITICO AL INICIAR LA APLICACION")
+        print("!" * 60)
+        print(f"\nDetalle: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print("\n" + "!" * 60)
+        input("\nPresiona Enter para salir...")
+        sys.exit(1)

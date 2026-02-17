@@ -32,34 +32,37 @@ A diferencia de otros upscalers genéricos, este proyecto implementa una capa de
 
 ---
 
-## 🚀 Instalación Rápida
+## 🚀 Formas de Ejecución
 
-1. **Clonar el repositorio:**
-   ```bash
-   git clone https://github.com/dannymaaz/Real_Esrgan_Upscaling_profesional.git
-   cd Real_Esrgan_Upscaling_profesional
-   ```
+### 1. Lanzador Directo (Windows - Recomendado)
+¡Ideal para abrir la app con un solo clic sin usar la terminal!
+1. Navega a la carpeta del proyecto.
+2. Haz doble clic en `Lanzador_RealESRGAN.bat`.
+3. (Opcional) Crea un acceso directo de este archivo y colócalo en tu **Escritorio**.
 
-2. **Instalar dependencias:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 2. Docker (Contenedorización Profesional)
+Si prefieres usar Docker para evitar instalar dependencias localmente:
+```bash
+docker-compose up -d
+```
+*La app estará disponible en `http://localhost:8000`.*
 
-3. **Descargar modelos (Automático):**
-   ```bash
-   python download_models.py
-   ```
+### 3. Ejecución Manual
+```bash
+# Instalar dependencias
+pip install -r requirements.txt
 
-4. **Ejecutar la App:**
-   ```bash
-   python run.py
-   ```
+# Ejecutar la App
+python run.py
+```
 
-5. **Modo Robusto (Recomendado para Producción/Estabilidad):**
-   Si deseas que el servidor se mantenga siempre activo y se reinicie automáticamente ante cualquier fallo:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File run_robust.ps1
-   ```
+### 4. Modo Robusto (Stability Manager)
+Si deseas que el servidor se mantenga siempre activo y se reinicie automáticamente ante cualquier fallo:
+```powershell
+powershell -ExecutionPolicy Bypass -File run_robust.ps1
+```
+
+> **⚡ Nota sobre Puertos:** La aplicación ahora incluye **Detección Automática de Conflictos**. Si el puerto default (8000) está ocupado por otra app, el sistema buscará automáticamente el siguiente puerto libre (8001, 8002...) para no interferir con tus otros proyectos.
 
 
 ---
