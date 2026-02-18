@@ -133,6 +133,7 @@ class ImageAnalyzer:
             "social_color_filter_detected": restoration_signals["social_color_filter_detected"],
             "social_filter_strength": restoration_signals["social_filter_strength"],
             "degraded_social_portrait": restoration_signals["degraded_social_portrait"],
+            "story_overlay_detected": restoration_signals["story_overlay_detected"],
             "is_monochrome": restoration_signals["is_monochrome"],
             "monochrome_confidence": round(restoration_signals["monochrome_confidence"], 3),
             "old_photo_detected": restoration_signals["old_photo_detected"],
@@ -184,20 +185,47 @@ class ImageAnalyzer:
             with Image.open(image_path) as pil_img:
                 exif = pil_img.getexif()
                 has_exif = bool(exif)
-                
-                # Redes sociales comunes eliminan EXIF y estandarizan anchos
+
+                exif_map = {
+                    ExifTags.TAGS.get(tag, tag): value
+                    for tag, value in (exif.items() if exif else [])
+                }
+
+                # Redes sociales suelen usar resoluciones/ratios estándar y software específico.
                 w, h = pil_img.size
                 social_widths = {720, 960, 1080, 1280, 1600, 1920, 2048}
-                
+
+                software_raw = str(exif_map.get("Software", "") or "").lower()
+                make_raw = str(exif_map.get("Make", "") or "").strip()
+                model_raw = str(exif_map.get("Model", "") or "").strip()
+                date_original = exif_map.get("DateTimeOriginal")
+                has_camera_tags = bool(make_raw or model_raw or date_original)
+
+                social_software_tokens = (
+                    "instagram", "facebook", "messenger", "whatsapp", "telegram",
+                    "snapchat", "tiktok", "xiaohongshu", "weibo", "line"
+                )
+                software_social_hint = any(token in software_raw for token in social_software_tokens)
+
+                portrait_ratio = h / max(1.0, float(w))
+                story_shape_hint = portrait_ratio > 1.6 and (w in {720, 1080, 1440} or h in {1280, 1920, 2560})
+                dimension_social_hint = (w in social_widths or h in social_widths)
+
                 is_social = False
-                if not has_exif:
-                    if w in social_widths or h in social_widths:
-                        is_social = True
-                
+
+                if software_social_hint:
+                    is_social = True
+                elif dimension_social_hint and (not has_exif or not has_camera_tags):
+                    is_social = True
+                elif story_shape_hint and not has_camera_tags:
+                    is_social = True
+
                 return {
                     "has_exif": has_exif,
                     "is_likely_social_media": is_social,
-                    "format": pil_img.format
+                    "format": pil_img.format,
+                    "software_hint": software_social_hint,
+                    "has_camera_tags": has_camera_tags
                 }
         except Exception:
             return {"has_exif": False, "is_likely_social_media": True, "format": "UNKNOWN"}
@@ -240,6 +268,9 @@ class ImageAnalyzer:
 
         if restoration_signals.get("degraded_social_portrait"):
             notes.append("Foto social degradada detectada: se sugiere perfil de rescate")
+
+        if restoration_signals.get("story_overlay_detected"):
+            notes.append("Captura tipo historia/red social detectada")
 
         if restoration_signals.get("is_monochrome"):
             notes.append("Imagen monocromática detectada (B/N o desaturada)")
@@ -297,6 +328,27 @@ class ImageAnalyzer:
                 "reason": "Señales de foto antigua o escaneo"
             }
 
+        if (
+            restoration_signals.get("story_overlay_detected", False)
+            and (
+                compression_score > 0.2
+                or pixelation_score > 0.12
+                or noise_level in {"medium", "high"}
+                or blur_severity in {"medium", "strong"}
+            )
+        ):
+            if compression_score > 0.82 or (pixelation_score > 0.36 and blur_severity == "strong"):
+                return {
+                    "key": "artifact_rescue_general",
+                    "strength": "high",
+                    "reason": "Captura tipo historia con artefacto severo"
+                }
+            return {
+                "key": "social_story_natural",
+                "strength": "medium",
+                "reason": "Captura tipo historia social con overlays"
+            }
+
         if restoration_signals.get("degraded_social_portrait"):
             return {
                 "key": "social_portrait_rescue",
@@ -305,9 +357,12 @@ class ImageAnalyzer:
             }
 
         if source_info.get("is_likely_social_media", False) and (
-            compression_score > 0.42
-            or pixelation_score > 0.22
+            compression_score > 0.56
             or blur_severity == "strong"
+            or (
+                noise_level == "high"
+                and compression_score > 0.45
+            )
         ):
             return {
                 "key": "artifact_rescue_general",
@@ -320,6 +375,24 @@ class ImageAnalyzer:
                 "key": "social_color_balance",
                 "strength": "medium",
                 "reason": "Filtro de color social/teléfono detectado"
+            }
+
+        if (
+            has_relevant_faces
+            and image_type in {"photo", "filtered_photo"}
+            and blur_severity in {"low", "medium"}
+            and noise_level in {"low", "medium"}
+            and compression_score < 0.52
+            and pixelation_score < 0.5
+            and not restoration_signals.get("degraded_social_portrait", False)
+            and not restoration_signals.get("old_photo_detected", False)
+            and not restoration_signals.get("scan_artifacts_detected", False)
+            and not restoration_signals.get("story_overlay_detected", False)
+        ):
+            return {
+                "key": "clean_portrait_tone_lock",
+                "strength": "low",
+                "reason": "Retrato limpio: priorizar tono y naturalidad"
             }
 
         if has_relevant_faces and lighting_condition == "low_light" and (
@@ -335,7 +408,7 @@ class ImageAnalyzer:
 
         if has_relevant_faces and (
             compression_score > 0.5
-            or pixelation_score > 0.22
+            or (pixelation_score > 0.38 and compression_score > 0.3)
             or blur_severity == "strong"
         ):
             return {
@@ -435,16 +508,59 @@ class ImageAnalyzer:
         blur_severity = blur_metrics.get("blur_severity", "low")
         has_relevant_faces = bool(face_info.get("has_faces", False) and face_info.get("importance") in {"medium", "high"})
 
+        # Señal de captura tipo "story": barras/texto claros en franja superior.
+        h, w = gray.shape
+        top_h = max(24, int(h * 0.1))
+        top_band = gray[:top_h, :]
+        bright_top_ratio = float(np.mean(top_band > 220))
+        top_edges = cv2.Canny(top_band, 80, 180)
+        horiz_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(24, int(w * 0.12)), 1))
+        top_horiz = cv2.morphologyEx(top_edges, cv2.MORPH_OPEN, horiz_kernel)
+        top_horiz_ratio = float(np.count_nonzero(top_horiz)) / max(1.0, float(top_horiz.size))
+        portrait_story_shape = h > int(w * 1.2)
+        bright_threshold = 0.012 if portrait_story_shape else 0.018
+        horiz_threshold = 0.0024 if portrait_story_shape else 0.0032
+        story_overlay_detected = bool(
+            (
+                bright_top_ratio > bright_threshold
+                and top_horiz_ratio > horiz_threshold
+            )
+            or (top_horiz_ratio > 0.008 and bright_top_ratio > 0.008)
+        )
+        if story_overlay_detected and not source_info.get("is_likely_social_media", False) and not portrait_story_shape:
+            story_overlay_detected = bool(top_horiz_ratio > 0.0048 and bright_top_ratio > 0.012)
+
+        format_hint = str(source_info.get("format", "") or "").upper()
+        is_scan_friendly_format = format_hint in {"TIFF", "BMP", "PNG"}
+
         old_photo_detected = bool(
-            (is_monochrome and contrast_std < 62)
-            or (scratch_ratio > 0.22)
-            or (contrast_std < 45 and noise_level in {"medium", "high"})
+            (is_monochrome and contrast_std < 68)
+            or (
+                scratch_ratio > 0.27
+                and (is_monochrome or is_scan_friendly_format or not has_relevant_faces)
+            )
+            or (
+                contrast_std < 42
+                and noise_level in {"medium", "high"}
+                and not has_relevant_faces
+            )
         )
 
         scan_artifacts_detected = bool(
-            scratch_ratio > 0.16
-            or (contrast_std < 48 and compression_score > 0.35)
-            or (source_info.get("format") in {"TIFF", "BMP"} and contrast_std < 68)
+            (
+                scratch_ratio > 0.24
+                and (is_scan_friendly_format or is_monochrome or not has_relevant_faces)
+            )
+            or (
+                scratch_ratio > 0.33
+                and (is_monochrome or not has_relevant_faces)
+            )
+            or (
+                contrast_std < 46
+                and compression_score > 0.45
+                and (is_monochrome or not has_relevant_faces)
+            )
+            or (format_hint in {"TIFF", "BMP"} and contrast_std < 72)
         )
 
         social_filter_score = 0.0
@@ -462,16 +578,25 @@ class ImageAnalyzer:
             social_filter_score += 0.15
 
         social_degradation_core = (
-            compression_score > 0.32
-            or pixelation_score > 0.18
+            compression_score > 0.54
             or blur_severity in {"medium", "strong"}
+            or (
+                noise_level == "high"
+                and (compression_score > 0.42 or blur_severity != "low")
+            )
         )
-        social_signature = (
-            magenta_cast > 0.04
-            or warm_cast > 0.05
-            or highlight_clip_ratio > 0.03
-            or saturation > 95
-        )
+        social_signature_score = 0
+        if magenta_cast > 0.04:
+            social_signature_score += 1
+        if warm_cast > 0.05:
+            social_signature_score += 1
+        if highlight_clip_ratio > 0.03:
+            social_signature_score += 1
+        if saturation > 95:
+            social_signature_score += 1
+        if story_overlay_detected:
+            social_signature_score += 1
+        social_signature = social_signature_score >= 2
 
         degraded_social_portrait = bool(
             social_degradation_core
@@ -481,7 +606,21 @@ class ImageAnalyzer:
         if degraded_social_portrait:
             social_filter_score += 0.2
 
-        social_color_filter_detected = bool(social_filter_score >= 0.42 and not is_monochrome)
+        color_cast_detected = (
+            magenta_cast > 0.035
+            or warm_cast > 0.055
+            or highlight_clip_ratio > 0.055
+        )
+        if story_overlay_detected:
+            social_filter_score += 0.1 if color_cast_detected else 0.03
+
+        social_color_filter_detected = bool(
+            not is_monochrome
+            and (
+                social_filter_score >= 0.5
+                or (social_filter_score >= 0.42 and color_cast_detected)
+            )
+        )
         if social_filter_score >= 0.9:
             social_filter_strength = "high"
         elif social_filter_score >= 0.62:
@@ -521,6 +660,7 @@ class ImageAnalyzer:
             "social_color_filter_detected": bool(social_color_filter_detected),
             "social_filter_strength": social_filter_strength,
             "degraded_social_portrait": bool(degraded_social_portrait),
+            "story_overlay_detected": bool(story_overlay_detected),
             "is_monochrome": bool(is_monochrome),
             "monochrome_confidence": monochrome_confidence,
             "old_photo_detected": bool(old_photo_detected),

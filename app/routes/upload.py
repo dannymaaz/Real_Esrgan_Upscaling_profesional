@@ -221,6 +221,7 @@ async def upscale_image(
             "face_importance": analysis.get("face_importance", "low"),
             "source_info": analysis.get("source_info", {}),
             "degraded_social_portrait": bool(analysis.get("degraded_social_portrait", False)),
+            "story_overlay_detected": bool(analysis.get("story_overlay_detected", False)),
             "social_color_filter_detected": bool(analysis.get("social_color_filter_detected", False)),
             "social_filter_strength": analysis.get("social_filter_strength", "none"),
             "filter_strength": analysis.get("filter_strength", "none"),

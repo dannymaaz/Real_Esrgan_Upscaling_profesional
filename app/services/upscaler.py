@@ -108,7 +108,13 @@ class RealESRGANUpscaler:
         lighting = profile.get("lighting_condition", "normal")
         if lighting == "low_light":
             weight *= 0.7  # Reducir peso en 30%
-            
+
+        if self._is_tone_lock_profile(profile):
+            weight *= 0.72
+
+        if bool(profile.get("story_overlay_detected", False)):
+            weight *= 0.76
+             
         return float(np.clip(weight, 0.04, 0.22))
 
     def _merge_face_enhancement(
@@ -255,7 +261,9 @@ class RealESRGANUpscaler:
         return key in {
             "social_portrait_rescue",
             "lowlight_portrait_natural",
-            "portrait_texture_guard"
+            "portrait_texture_guard",
+            "social_story_natural",
+            "clean_portrait_tone_lock"
         }
 
     def _is_heavy_artifact_profile(self, profile: Dict) -> bool:
@@ -264,6 +272,14 @@ class RealESRGANUpscaler:
         return key in {
             "artifact_rescue_general",
             "old_scan_repair"
+        }
+
+    def _is_tone_lock_profile(self, profile: Dict) -> bool:
+        key = str(profile.get("repair_profile", ""))
+        return key in {
+            "clean_portrait_tone_lock",
+            "social_story_natural",
+            "social_color_balance"
         }
     
     def _get_model_arch(self, model_key: str):
@@ -369,6 +385,7 @@ class RealESRGANUpscaler:
 
         img = self._ensure_bgr_uint8(img)
         filter_strength = profile.get("social_filter_strength", profile.get("filter_strength", "medium"))
+        tone_lock_profile = self._is_tone_lock_profile(profile)
 
         working = img.copy()
         applied = False
@@ -383,6 +400,10 @@ class RealESRGANUpscaler:
             else:
                 saturation_factor = 0.86
                 wb_blend = 0.33
+
+            if tone_lock_profile:
+                saturation_factor = min(1.0, saturation_factor + 0.08)
+                wb_blend *= 0.82
 
             hsv = cv2.cvtColor(working, cv2.COLOR_BGR2HSV).astype(np.float32)
             hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation_factor, 0, 255)
@@ -405,6 +426,15 @@ class RealESRGANUpscaler:
 
             # Mezcla para conservar esencia original.
             working = cv2.addWeighted(filter_reduced, 1.0 - wb_blend, balanced, wb_blend, 0)
+
+            # Proteger tonos de piel para evitar desaturación artificial.
+            skin_mask = self._build_skin_mask(img)
+            if float(np.mean(skin_mask)) > 0.02:
+                preserve_ratio = 0.48 if tone_lock_profile else 0.36
+                skin_alpha = cv2.GaussianBlur(skin_mask.astype(np.float32), (0, 0), 1.4) * preserve_ratio
+                skin_alpha_3c = np.repeat(skin_alpha[:, :, None], 3, axis=2)
+                working = img.astype(np.float32) * skin_alpha_3c + working.astype(np.float32) * (1.0 - skin_alpha_3c)
+                working = np.clip(working, 0, 255).astype(np.uint8)
             applied = True
 
         if apply_old_photo_restore:
@@ -824,6 +854,7 @@ class RealESRGANUpscaler:
         lighting = profile.get("lighting_condition", "normal")
         has_relevant_faces = bool(profile.get("has_faces", False)) and profile.get("face_importance") in {"medium", "high"}
         profile_key = str(profile.get("repair_profile", "balanced_photo"))
+        tone_lock_profile = self._is_tone_lock_profile(profile)
 
         if image_type == "filtered_photo":
             base_amount = 0.12
@@ -857,6 +888,12 @@ class RealESRGANUpscaler:
         if profile_key in {"artifact_rescue_general", "old_scan_repair"}:
             base_amount *= 0.86
 
+        if tone_lock_profile:
+            base_amount *= 0.68
+
+        if bool(profile.get("story_overlay_detected", False)):
+            base_amount *= 0.72
+
         if has_relevant_faces and compression_score > 0.55:
             base_amount *= 0.74
 
@@ -870,7 +907,7 @@ class RealESRGANUpscaler:
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
         clahe = cv2.createCLAHE(
-            clipLimit=1.28 if image_type == "filtered_photo" else 1.2,
+            clipLimit=1.12 if tone_lock_profile else (1.28 if image_type == "filtered_photo" else 1.2),
             tileGridSize=(8, 8)
         )
         l_contrast = clahe.apply(l_channel)
@@ -880,7 +917,10 @@ class RealESRGANUpscaler:
         )
 
         blur = cv2.GaussianBlur(contrast_img, (0, 0), 1.05)
-        sharpened = cv2.addWeighted(contrast_img, 1.09, blur, -0.09, 0)
+        if tone_lock_profile:
+            sharpened = cv2.addWeighted(contrast_img, 1.05, blur, -0.05, 0)
+        else:
+            sharpened = cv2.addWeighted(contrast_img, 1.09, blur, -0.09, 0)
 
         skin_mask = self._build_skin_mask(img)
         detail_map = np.full(skin_mask.shape, detail_amount, dtype=np.float32)
@@ -945,6 +985,7 @@ class RealESRGANUpscaler:
         blur_severity = profile.get("blur_severity", "low")
         uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
         portrait_sensitive_profile = self._is_portrait_sensitive_profile(profile)
+        tone_lock_profile = self._is_tone_lock_profile(profile)
         heavy_artifact_profile = self._is_heavy_artifact_profile(profile)
 
         denoise_strength = 0
@@ -996,6 +1037,9 @@ class RealESRGANUpscaler:
         if portrait_sensitive_profile and has_relevant_faces:
             denoise_strength = min(denoise_strength, 2)
 
+        if tone_lock_profile:
+            denoise_strength = min(denoise_strength, 1)
+
         lighting = profile.get("lighting_condition", "normal")
         if lighting == "low_light":
             denoise_strength *= 0.6  # Reducir denoise en noche para evitar "plástico"
@@ -1031,6 +1075,9 @@ class RealESRGANUpscaler:
 
         if portrait_sensitive_profile and has_relevant_faces:
             keep_original = min(0.86, max(keep_original, 0.76))
+
+        if tone_lock_profile:
+            keep_original = min(0.9, max(keep_original, 0.8))
 
         blended = cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
         
@@ -1137,6 +1184,13 @@ class RealESRGANUpscaler:
             sharpen_strength *= 0.85
             sharpen_strength = np.where(skin_mask > 0.2, np.minimum(sharpen_strength, 0.05), sharpen_strength)
 
+        if tone_lock_profile:
+            sharpen_strength *= 0.78
+            sharpen_strength = np.where(skin_mask > 0.2, np.minimum(sharpen_strength, 0.045), sharpen_strength)
+
+        if bool(profile.get("story_overlay_detected", False)):
+            sharpen_strength *= 0.86
+
         sharpen_strength_3c = np.repeat(sharpen_strength[:, :, None], 3, axis=2)
         
         # Cálculo final en float32
@@ -1150,6 +1204,8 @@ class RealESRGANUpscaler:
         """
         h, w, c = img.shape
         lighting = profile.get("lighting_condition", "normal")
+        if self._is_tone_lock_profile(profile):
+            return img
         
         # Base de fuerza de grano
         grain_strength = 2.0
