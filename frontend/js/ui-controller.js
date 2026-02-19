@@ -531,15 +531,28 @@ class UIController {
         const originalImg = document.getElementById('originalImage');
         const processedImg = document.getElementById('processedImage');
         const container = document.getElementById('comparisonContainer');
+        const resultPanel = document.getElementById('resultPanel');
 
         if (!zoomInBtn || !originalImg || !processedImg || !container || !zoomLevelDisplay) return;
 
         if (!this._zoomState) {
-            this._zoomState = { scale: 1, panX: 0, panY: 0 };
+            this._zoomState = {
+                scale: 1,
+                panX: 0,
+                panY: 0,
+                baseWidth: 0,
+                baseHeight: 0,
+                baseDirty: true,
+                lastTransform: '',
+                rafPending: false
+            };
         } else {
             this._zoomState.scale = 1;
             this._zoomState.panX = 0;
             this._zoomState.panY = 0;
+            this._zoomState.baseDirty = true;
+            this._zoomState.lastTransform = '';
+            this._zoomState.rafPending = false;
         }
         const state = this._zoomState;
 
@@ -562,33 +575,75 @@ class UIController {
             };
         };
 
-        const clampPan = () => {
+        const updateBaseSize = () => {
             const base = getDisplaySize(originalImg);
-            const maxX = Math.max(0, ((base.width * state.scale) - base.width) * 0.5);
-            const maxY = Math.max(0, ((base.height * state.scale) - base.height) * 0.5);
+            state.baseWidth = base.width;
+            state.baseHeight = base.height;
+            state.baseDirty = false;
+        };
+
+        const clampPan = () => {
+            if (state.baseDirty) {
+                updateBaseSize();
+            }
+
+            const baseWidth = state.baseWidth || 1;
+            const baseHeight = state.baseHeight || 1;
+            const maxX = Math.max(0, ((baseWidth * state.scale) - baseWidth) * 0.5);
+            const maxY = Math.max(0, ((baseHeight * state.scale) - baseHeight) * 0.5);
             state.panX = Math.max(-maxX, Math.min(maxX, state.panX));
             state.panY = Math.max(-maxY, Math.min(maxY, state.panY));
         };
 
-        const applyTransform = () => {
-            state.scale = Math.max(1, Math.min(5, state.scale));
-            clampPan();
-
-            const transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
-            originalImg.style.transformOrigin = '50% 50%';
-            processedImg.style.transformOrigin = '50% 50%';
-            originalImg.style.transform = transform;
-            processedImg.style.transform = transform;
-
-            zoomLevelDisplay.textContent = `${Math.round(state.scale * 100)}%`;
-            if (state.scale > 1) {
-                container.style.cursor = dragActive ? 'grabbing' : 'grab';
-            } else {
-                container.style.cursor = 'col-resize';
+        const setZoomMode = (isZoomed) => {
+            if (resultPanel) {
+                resultPanel.classList.toggle('is-zooming', isZoomed);
             }
+            container.classList.toggle('is-zooming', isZoomed);
         };
 
+        const applyTransform = () => {
+            if (state.rafPending) return;
+            state.rafPending = true;
+
+            requestAnimationFrame(() => {
+                state.rafPending = false;
+
+                if (state.scale <= 1) {
+                    state.scale = 1;
+                    state.panX = 0;
+                    state.panY = 0;
+                } else {
+                    state.scale = Math.min(5, state.scale);
+                }
+
+                clampPan();
+
+                const transform = `translate3d(${state.panX}px, ${state.panY}px, 0) scale(${state.scale})`;
+                if (state.lastTransform !== transform) {
+                    originalImg.style.transform = transform;
+                    processedImg.style.transform = transform;
+                    state.lastTransform = transform;
+                }
+
+                zoomLevelDisplay.textContent = `${Math.round(state.scale * 100)}%`;
+                const zoomed = state.scale > 1;
+                setZoomMode(zoomed);
+                container.style.cursor = zoomed ? (dragActive ? 'grabbing' : 'grab') : 'col-resize';
+            });
+        };
+
+        originalImg.style.transformOrigin = '50% 50%';
+        processedImg.style.transformOrigin = '50% 50%';
+
         const stopPanDrag = () => {
+            if (dragPointerId !== null) {
+                try {
+                    container.releasePointerCapture(dragPointerId);
+                } catch (_) {
+                    // Ignore
+                }
+            }
             dragActive = false;
             dragPointerId = null;
             applyTransform();
@@ -616,60 +671,100 @@ class UIController {
             applyTransform();
         };
 
-        if (container.dataset.zoomBound !== '1') {
-            container.dataset.zoomBound = '1';
+        const onWheel = (e) => {
+            e.preventDefault();
+            const previousScale = state.scale;
 
-            container.addEventListener('wheel', (e) => {
-                e.preventDefault();
-                const previousScale = state.scale;
+            if (e.deltaY < 0) {
+                state.scale += 0.1;
+            } else {
+                state.scale -= 0.1;
+            }
 
-                if (e.deltaY < 0) {
-                    state.scale += 0.1;
-                } else {
-                    state.scale -= 0.1;
-                }
+            if (state.scale <= 1) {
+                state.scale = 1;
+                state.panX = 0;
+                state.panY = 0;
+            } else if (previousScale === 1 && state.scale > 1) {
+                state.panX = 0;
+                state.panY = 0;
+            }
 
-                if (state.scale <= 1) {
-                    state.scale = 1;
-                    state.panX = 0;
-                    state.panY = 0;
-                } else if (previousScale === 1 && state.scale > 1) {
-                    // Mantener centro estable al primer zoom.
-                    state.panX = 0;
-                    state.panY = 0;
-                }
+            applyTransform();
+        };
 
-                applyTransform();
-            }, { passive: false });
+        const onPointerDown = (e) => {
+            if (e.button !== 0) return;
+            if (state.scale <= 1) return;
+            if (e.target && e.target.closest('#scroller')) return;
 
-            container.addEventListener('pointerdown', (e) => {
-                if (e.button !== 0) return;
-                if (state.scale <= 1) return;
-                if (e.target && e.target.closest('#scroller')) return;
+            dragActive = true;
+            dragPointerId = e.pointerId;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            dragStartPanX = state.panX;
+            dragStartPanY = state.panY;
+            container.setPointerCapture(dragPointerId);
+            applyTransform();
+            e.preventDefault();
+        };
 
-                dragActive = true;
-                dragPointerId = e.pointerId;
-                dragStartX = e.clientX;
-                dragStartY = e.clientY;
-                dragStartPanX = state.panX;
-                dragStartPanY = state.panY;
-                container.setPointerCapture(dragPointerId);
-                applyTransform();
-                e.preventDefault();
-            });
+        const onPointerMove = (e) => {
+            if (!dragActive || dragPointerId !== e.pointerId) return;
+            state.panX = dragStartPanX + (e.clientX - dragStartX);
+            state.panY = dragStartPanY + (e.clientY - dragStartY);
+            applyTransform();
+        };
 
-            container.addEventListener('pointermove', (e) => {
-                if (!dragActive || dragPointerId !== e.pointerId) return;
-                state.panX = dragStartPanX + (e.clientX - dragStartX);
-                state.panY = dragStartPanY + (e.clientY - dragStartY);
-                applyTransform();
-            });
+        const onPointerUp = () => {
+            stopPanDrag();
+        };
 
-            container.addEventListener('pointerup', stopPanDrag);
-            container.addEventListener('pointercancel', stopPanDrag);
-            container.addEventListener('lostpointercapture', stopPanDrag);
+        const onPointerCancel = () => {
+            stopPanDrag();
+        };
+
+        const onLostPointerCapture = () => {
+            stopPanDrag();
+        };
+
+        if (this._zoomHandlers && this._zoomHandlers.container) {
+            const old = this._zoomHandlers;
+            old.container.removeEventListener('wheel', old.onWheel);
+            old.container.removeEventListener('pointerdown', old.onPointerDown);
+            old.container.removeEventListener('pointermove', old.onPointerMove);
+            old.container.removeEventListener('pointerup', old.onPointerUp);
+            old.container.removeEventListener('pointercancel', old.onPointerCancel);
+            old.container.removeEventListener('lostpointercapture', old.onLostPointerCapture);
         }
 
+        container.addEventListener('wheel', onWheel, { passive: false });
+        container.addEventListener('pointerdown', onPointerDown);
+        container.addEventListener('pointermove', onPointerMove);
+        container.addEventListener('pointerup', onPointerUp);
+        container.addEventListener('pointercancel', onPointerCancel);
+        container.addEventListener('lostpointercapture', onLostPointerCapture);
+
+        this._zoomHandlers = {
+            container,
+            onWheel,
+            onPointerDown,
+            onPointerMove,
+            onPointerUp,
+            onPointerCancel,
+            onLostPointerCapture
+        };
+
+        if (this._zoomResizeHandler) {
+            window.removeEventListener('resize', this._zoomResizeHandler);
+        }
+        this._zoomResizeHandler = () => {
+            state.baseDirty = true;
+            applyTransform();
+        };
+        window.addEventListener('resize', this._zoomResizeHandler, { passive: true });
+
+        state.baseDirty = true;
         applyTransform();
     }
 

@@ -581,6 +581,20 @@
     justify-content: center;
     animation: fadeIn 0.22s ease;
 }
+.result-panel.is-zooming {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(7, 12, 24, 0.9);
+}
+
+.result-panel.is-zooming .glass-card {
+    box-shadow: none;
+}
+
+.result-panel.is-zooming .label-badge {
+    backdrop-filter: none;
+}
+
 
 .result-card {
     width: min(1200px, calc(100vw - 2rem));

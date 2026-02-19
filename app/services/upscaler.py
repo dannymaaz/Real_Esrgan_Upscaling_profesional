@@ -263,7 +263,8 @@ class RealESRGANUpscaler:
             "lowlight_portrait_natural",
             "portrait_texture_guard",
             "social_story_natural",
-            "clean_portrait_tone_lock"
+            "clean_portrait_tone_lock",
+            "clean_photo_soft"
         }
 
     def _is_heavy_artifact_profile(self, profile: Dict) -> bool:
@@ -279,7 +280,8 @@ class RealESRGANUpscaler:
         return key in {
             "clean_portrait_tone_lock",
             "social_story_natural",
-            "social_color_balance"
+            "social_color_balance",
+            "clean_photo_soft"
         }
     
     def _get_model_arch(self, model_key: str):

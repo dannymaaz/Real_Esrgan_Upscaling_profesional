@@ -266,6 +266,29 @@ class ImageAnalyzer:
             strength = restoration_signals.get("filter_strength", "medium")
             notes.append(f"Filtro detectado (intensidad {strength})")
 
+        if (
+            image_type in {"photo", "filtered_photo"}
+            and blur_severity == "low"
+            and noise_level == "low"
+            and compression_score < 0.5
+            and pixelation_score < 0.3
+            and not restoration_signals.get("degraded_social_portrait", False)
+            and not restoration_signals.get("old_photo_detected", False)
+            and not restoration_signals.get("scan_artifacts_detected", False)
+            and not restoration_signals.get("story_overlay_detected", False)
+        ):
+            social_strength = restoration_signals.get("social_filter_strength", "none")
+            filter_strength = restoration_signals.get("filter_strength", "none")
+            if not (
+                restoration_signals.get("social_color_filter_detected")
+                and (social_strength in {"medium", "high"} or filter_strength in {"medium", "high"})
+            ):
+                return {
+                    "key": "clean_photo_soft",
+                    "strength": "low",
+                    "reason": "Foto limpia con compresion moderada: enfoque suave"
+                }
+
         if restoration_signals.get("social_color_filter_detected"):
             strength = restoration_signals.get("social_filter_strength", "medium")
             notes.append(f"Posible filtro de color social/teléfono (intensidad {strength})")
@@ -569,6 +592,17 @@ class ImageAnalyzer:
             )
             or (format_hint in {"TIFF", "BMP"} and contrast_std < 72)
         )
+
+        modern_source_hint = bool(source_info.get("has_camera_tags")) or bool(source_info.get("is_likely_social_media"))
+        if modern_source_hint and not is_monochrome and not is_scan_friendly_format:
+            strong_scan_evidence = (
+                scratch_ratio > 0.38
+                or (contrast_std < 34 and noise_level in {"medium", "high"} and not has_relevant_faces)
+            )
+            if not strong_scan_evidence:
+                old_photo_detected = False
+                if scratch_ratio < 0.32 and contrast_std > 38:
+                    scan_artifacts_detected = False
 
         if story_overlay_detected and not is_monochrome:
             old_photo_detected = False
@@ -1145,6 +1179,14 @@ class ImageAnalyzer:
         blur_metrics = blur_metrics or {}
 
         # Para imágenes de Instagram/altamente comprimidas, 2x produce resultados más naturales.
+        if image_type in {"photo", "filtered_photo"}:
+            if (
+                compression_metrics.get("compression_score", 0.0) > 0.55
+                or pixelation_metrics.get("pixelation_score", 0.0) > 0.28
+                or blur_metrics.get("blur_severity") in {"medium", "strong"}
+            ):
+                return 2
+
         if (
             noise_level in {"medium", "high"}
             and (

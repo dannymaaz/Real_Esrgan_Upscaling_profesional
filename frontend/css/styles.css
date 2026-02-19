@@ -395,7 +395,12 @@ body {
     cursor: col-resize;
     box-shadow: var(--shadow-card);
     border: 1px solid hsla(210, 100%, 56%, 0.2);
+    contain: layout paint;
 }
+.comparison-container.is-zooming .img-wrapper img {
+    will-change: transform;
+}
+
 
 .image-comparison {
     position: relative;
