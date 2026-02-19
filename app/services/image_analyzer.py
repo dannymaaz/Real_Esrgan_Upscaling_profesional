@@ -266,29 +266,6 @@ class ImageAnalyzer:
             strength = restoration_signals.get("filter_strength", "medium")
             notes.append(f"Filtro detectado (intensidad {strength})")
 
-        if (
-            image_type in {"photo", "filtered_photo"}
-            and blur_severity == "low"
-            and noise_level == "low"
-            and compression_score < 0.5
-            and pixelation_score < 0.3
-            and not restoration_signals.get("degraded_social_portrait", False)
-            and not restoration_signals.get("old_photo_detected", False)
-            and not restoration_signals.get("scan_artifacts_detected", False)
-            and not restoration_signals.get("story_overlay_detected", False)
-        ):
-            social_strength = restoration_signals.get("social_filter_strength", "none")
-            filter_strength = restoration_signals.get("filter_strength", "none")
-            if not (
-                restoration_signals.get("social_color_filter_detected")
-                and (social_strength in {"medium", "high"} or filter_strength in {"medium", "high"})
-            ):
-                return {
-                    "key": "clean_photo_soft",
-                    "strength": "low",
-                    "reason": "Foto limpia con compresion moderada: enfoque suave"
-                }
-
         if restoration_signals.get("social_color_filter_detected"):
             strength = restoration_signals.get("social_filter_strength", "medium")
             notes.append(f"Posible filtro de color social/teléfono (intensidad {strength})")

@@ -137,30 +137,65 @@ class RealESRGANUpscaler:
         if not face_boxes:
             return base_img
 
+        # Usar solo detalle de luminancia de GFPGAN, manteniendo color base.
+        base_lab = cv2.cvtColor(base_img, cv2.COLOR_BGR2LAB).astype(np.float32)
+        enh_lab = cv2.cvtColor(enhanced_img, cv2.COLOR_BGR2LAB).astype(np.float32)
+        enh_l = enh_lab[:, :, 0]
+        blur_l = cv2.GaussianBlur(enh_l, (0, 0), 1.2)
+        detail_l = np.clip(enh_l - blur_l, -18.0, 18.0)
+
         diff = cv2.absdiff(base_img, enhanced_img)
         diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
-        _, changed = cv2.threshold(diff_gray, 5, 255, cv2.THRESH_BINARY)
+        _, changed = cv2.threshold(diff_gray, 6, 255, cv2.THRESH_BINARY)
         changed = cv2.dilate(changed, np.ones((5, 5), np.uint8), iterations=1)
 
         h, w = diff_gray.shape
         face_mask = np.zeros((h, w), dtype=np.uint8)
+        skin_mask = self._build_skin_mask(base_img)
         for x, y, fw, fh in face_boxes:
-            expand_x = int(fw * 0.24)
-            expand_y = int(fh * 0.32)
-            x1 = max(0, x - expand_x)
-            y1 = max(0, y - expand_y)
-            x2 = min(w, x + fw + expand_x)
-            y2 = min(h, y + fh + expand_y)
-            cv2.rectangle(face_mask, (x1, y1), (x2, y2), 255, -1)
+            if fw <= 0 or fh <= 0:
+                continue
+            aspect = fw / float(max(1, fh))
+            if aspect < 0.6 or aspect > 1.7:
+                continue
+            box_area = (fw * fh) / float(max(1, w * h))
+            if box_area < 0.002 or box_area > 0.45:
+                continue
+
+            shrink_x = int(fw * 0.08)
+            shrink_y = int(fh * 0.12)
+            x1 = max(0, x + shrink_x)
+            y1 = max(0, y + shrink_y)
+            x2 = min(w, x + fw - shrink_x)
+            y2 = min(h, y + fh - shrink_y)
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            skin_ratio = float(np.mean(skin_mask[y1:y2, x1:x2]))
+            if skin_ratio < 0.05:
+                continue
+
+            cx = int((x1 + x2) * 0.5)
+            cy = int((y1 + y2) * 0.5)
+            axes_x = max(6, int((x2 - x1) * 0.5))
+            axes_y = max(6, int((y2 - y1) * 0.58))
+            cv2.ellipse(face_mask, (cx, cy), (axes_x, axes_y), 0, 0, 360, 255, -1)
+
+        if not np.any(face_mask):
+            return base_img
 
         face_mask = cv2.GaussianBlur(face_mask, (0, 0), 4.5).astype(np.float32) / 255.0
         changed_soft = cv2.GaussianBlur(changed, (0, 0), 2.0).astype(np.float32) / 255.0
 
-        alpha = np.clip(changed_soft * face_mask, 0.0, 1.0) * 0.52
-        alpha_3c = np.repeat(alpha[:, :, None], 3, axis=2)
+        detail_mask = np.clip(changed_soft * 1.2, 0.0, 1.0)
+        tone_mask = np.clip(skin_mask * 0.9 + detail_mask * 0.35, 0.0, 1.0)
+        alpha = np.clip(face_mask * tone_mask, 0.0, 1.0) * 0.6
 
-        merged = base_img.astype(np.float32) * (1.0 - alpha_3c) + enhanced_img.astype(np.float32) * alpha_3c
-        return np.clip(merged, 0, 255).astype(np.uint8)
+        merged_lab = base_lab.copy()
+        merged_l = merged_lab[:, :, 0] + (detail_l * alpha)
+        merged_lab[:, :, 0] = np.clip(merged_l, 0, 255)
+        merged = cv2.cvtColor(merged_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+        return merged
 
     def _detect_face_boxes(self, img: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """Detecta cajas de rostro para limitar mezcla de GFPGAN."""
@@ -1147,6 +1182,7 @@ class RealESRGANUpscaler:
         blur_severity = profile.get("blur_severity", "low")
         uniform_restore_mode = bool(profile.get("uniform_restore_mode", False))
         portrait_sensitive_profile = self._is_portrait_sensitive_profile(profile)
+        tone_lock_profile = self._is_tone_lock_profile(profile)
         if blur_severity == "strong":
             base_amount = 0.24
         elif blur_severity == "medium":
