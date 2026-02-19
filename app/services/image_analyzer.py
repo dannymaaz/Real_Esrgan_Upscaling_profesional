@@ -208,7 +208,11 @@ class ImageAnalyzer:
                 software_social_hint = any(token in software_raw for token in social_software_tokens)
 
                 portrait_ratio = h / max(1.0, float(w))
-                story_shape_hint = portrait_ratio > 1.6 and (w in {720, 1080, 1440} or h in {1280, 1920, 2560})
+                story_shape_hint = portrait_ratio > 1.6 and (
+                    w in {720, 1080, 1440}
+                    or h in {1280, 1920, 2560}
+                    or (1080 <= w <= 1350 and 2000 <= h <= 2600)
+                )
                 dimension_social_hint = (w in social_widths or h in social_widths)
 
                 is_social = False
@@ -520,12 +524,15 @@ class ImageAnalyzer:
         portrait_story_shape = h > int(w * 1.2)
         bright_threshold = 0.012 if portrait_story_shape else 0.018
         horiz_threshold = 0.0024 if portrait_story_shape else 0.0032
+        top_edge_ratio = float(np.mean(top_edges > 0))
         story_overlay_detected = bool(
             (
                 bright_top_ratio > bright_threshold
                 and top_horiz_ratio > horiz_threshold
             )
             or (top_horiz_ratio > 0.008 and bright_top_ratio > 0.008)
+            or (portrait_story_shape and top_horiz_ratio > 0.0022 and bright_top_ratio > 0.006)
+            or (portrait_story_shape and top_edge_ratio > 0.03 and bright_top_ratio > 0.015)
         )
         if story_overlay_detected and not source_info.get("is_likely_social_media", False) and not portrait_story_shape:
             story_overlay_detected = bool(top_horiz_ratio > 0.0048 and bright_top_ratio > 0.012)
@@ -562,6 +569,10 @@ class ImageAnalyzer:
             )
             or (format_hint in {"TIFF", "BMP"} and contrast_std < 72)
         )
+
+        if story_overlay_detected and not is_monochrome:
+            old_photo_detected = False
+            scan_artifacts_detected = False
 
         social_filter_score = 0.0
         if source_info.get("is_likely_social_media"):
@@ -772,7 +783,13 @@ class ImageAnalyzer:
             return "filtered_photo"
 
         # Ilustraciones (no anime) tienden a bordes más suaves y paleta uniforme.
-        if color_variance < 26 and saturation > 70 and edge_density < 0.04:
+        if (
+            color_variance < 26
+            and saturation > 70
+            and edge_density < 0.04
+            and compression_score < 0.45
+            and pixelation_score < 0.3
+        ):
             return "illustration"
 
         # Por defecto, asumir foto real.

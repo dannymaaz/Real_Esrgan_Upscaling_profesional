@@ -4,6 +4,11 @@
 
 $Host.UI.RawUI.WindowTitle = "Real-ESRGAN Stability Manager - Danny Maaz"
 
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+[Console]::OutputEncoding = $OutputEncoding
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "   Real-ESRGAN Upscaling Profesional - Stability Manager" -ForegroundColor Cyan
 Write-Host "            Creado por: Danny Maaz (github.com/dannymaaz)" -ForegroundColor Cyan
@@ -12,25 +17,29 @@ Write-Host "============================================================" -Foreg
 $LOG_FILE = "server_robust_log.txt"
 $ERROR_LOG = "error_robust_log.txt"
 
-# Función para limpiar procesos en el puerto 8000
-function Stop-PortProcess {
-    $process = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
-    if ($process) {
-        Write-Host "[!] Puerto 8000 ocupado. Cerrando proceso $((Get-Process -Id $process.OwningProcess[0]).Name)..." -ForegroundColor Yellow
-        Stop-Process -Id $process.OwningProcess -Force
-        Start-Sleep -Seconds 2
-    }
+# Detectar entorno virtual si existe
+$ROOT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ROOT_DIR
+
+$PYTHON_EXE = "python"
+if (Test-Path (Join-Path $ROOT_DIR "venv\Scripts\python.exe")) {
+    Write-Host "[*] Entorno virtual detectado: venv" -ForegroundColor Yellow
+    $PYTHON_EXE = Join-Path $ROOT_DIR "venv\Scripts\python.exe"
+} elseif (Test-Path (Join-Path $ROOT_DIR ".venv\Scripts\python.exe")) {
+    Write-Host "[*] Entorno virtual detectado: .venv" -ForegroundColor Yellow
+    $PYTHON_EXE = Join-Path $ROOT_DIR ".venv\Scripts\python.exe"
+} else {
+    Write-Host "[!] ADVERTENCIA: No se encontro carpeta 'venv' o '.venv'." -ForegroundColor Yellow
+    Write-Host "    Se usara el Python global del sistema." -ForegroundColor Yellow
 }
 
 # Bucle principal de ejecución
 while ($true) {
-    Stop-PortProcess
-    
     Write-Host "[*] Iniciando servidor: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Green
     
     # Ejecutar la aplicación
     # Usamos python run.py que ya maneja la lógica de apertura de navegador y uvicorn
-    python run.py 2>> $ERROR_LOG | Tee-Object -FilePath $LOG_FILE -Append
+    & $PYTHON_EXE run.py 2>> $ERROR_LOG | Tee-Object -FilePath $LOG_FILE -Append -Encoding utf8
     
     $exitCode = $LASTEXITCODE
     

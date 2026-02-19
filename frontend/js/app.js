@@ -596,7 +596,7 @@ function getForcedImageTypeFromUI(analysis) {
         return null;
     }
 
-    if (analysis.image_type === 'anime') {
+    if (analysis.image_type === 'anime' || analysis.image_type === 'illustration') {
         return 'photo';
     }
 

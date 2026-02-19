@@ -6,6 +6,8 @@ Autor: Danny Maaz (github.com/dannymaaz)
 import sys
 import subprocess
 import webbrowser
+import os
+import socket
 from pathlib import Path
 from time import sleep
 
@@ -56,16 +58,38 @@ def is_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('127.0.0.1', port)) == 0
 
-def find_available_port(start_port, max_attempts=10):
+def _can_bind_port(port):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(('127.0.0.1', port))
+            except OSError:
+                return False
+        return True
+    except OSError:
+        return False
+
+def find_available_port(start_port, max_attempts=50):
     port = start_port
     for _ in range(max_attempts):
-        if not is_port_in_use(port):
+        if not is_port_in_use(port) and _can_bind_port(port):
             return port
         port += 1
     return None
 
+def _configure_stdio():
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 def main():
     """Ejecuta la aplicación"""
+    _configure_stdio()
     print("=" * 60)
     print("Real-ESRGAN Upscaling Profesional")
     print("    Creado por Danny Maaz")

@@ -83,10 +83,10 @@ class UIController {
         if (overrideContainer && overrideBtn && overrideLabel && overrideDescription) {
             overrideBtn.checked = false;
 
-            if (analysis.image_type === 'anime') {
+            if (analysis.image_type === 'anime' || analysis.image_type === 'illustration') {
                 overrideContainer.style.display = 'block';
                 overrideLabel.textContent = 'Tratar como Fotografía real';
-                overrideDescription.textContent = 'Actívalo si la imagen detectada como anime es en realidad una foto de una persona o escena real.';
+                overrideDescription.textContent = 'Actívalo si la imagen detectada como anime/ilustración es en realidad una foto de una persona o escena real.';
             } else if (analysis.image_type === 'photo' || analysis.image_type === 'filtered_photo') {
                 overrideContainer.style.display = 'block';
                 overrideLabel.textContent = 'Tratar como Anime/Ilustración';
