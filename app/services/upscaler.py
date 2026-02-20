@@ -91,18 +91,18 @@ class RealESRGANUpscaler:
 
         # Base conservadora para evitar "cara nueva".
         if face_fidelity == "ultra":
-            weight = 0.08
+            weight = 0.10
         elif face_fidelity == "high":
-            weight = 0.1
+            weight = 0.12
         else:
-            weight = 0.13
+            weight = 0.14
 
         severe_degradation = (
             blur_severity == "strong"
             and (pixelation_score > 0.3 or compression_score > 0.5)
         )
         if severe_degradation:
-            weight = min(0.22, weight + 0.05)
+            weight = min(0.2, weight + 0.04)
 
         # Ajuste por condiciones de luz (en baja luz, GFPGAN tiende a verse muy artificial/pegado)
         lighting = profile.get("lighting_condition", "normal")
@@ -115,7 +115,7 @@ class RealESRGANUpscaler:
         if bool(profile.get("story_overlay_detected", False)):
             weight *= 0.76
              
-        return float(np.clip(weight, 0.04, 0.22))
+        return float(np.clip(weight, 0.04, 0.18))
 
     def _merge_face_enhancement(
         self,
@@ -757,6 +757,14 @@ class RealESRGANUpscaler:
 
         face_enhance_effective = bool(face_enhance)
         face_enhance_skipped = False
+        auto_face_enhance = False
+
+        # Activar mejora facial automática cuando se detectan rostros relevantes
+        if not face_enhance_effective:
+            if processing_profile.get("has_faces", False) and processing_profile.get("face_importance") in {"medium", "high"}:
+                face_enhance_effective = True
+                auto_face_enhance = True
+
         if face_enhance_effective and self.device == 'cpu':
             projected_output_pixels = int(original_width * original_height * scale * scale)
             if projected_output_pixels > 20_000_000:
@@ -863,6 +871,7 @@ class RealESRGANUpscaler:
             },
             "device_used": self.device,
             "face_enhance": face_enhance_effective,
+            "auto_face_enhance_enabled": bool(auto_face_enhance and not face_enhance_skipped),
             "face_enhance_skipped": face_enhance_skipped,
             "postprocess_applied": postprocess_applied,
             "detail_boost_applied": detail_boost_applied,
@@ -1077,6 +1086,9 @@ class RealESRGANUpscaler:
         if tone_lock_profile:
             denoise_strength = min(denoise_strength, 1)
 
+        if compression_score < 0.6 and blur_severity != "strong":
+            denoise_strength = min(denoise_strength, 2)
+
         lighting = profile.get("lighting_condition", "normal")
         if lighting == "low_light":
             denoise_strength *= 0.6  # Reducir denoise en noche para evitar "plástico"
@@ -1115,6 +1127,9 @@ class RealESRGANUpscaler:
 
         if tone_lock_profile:
             keep_original = min(0.9, max(keep_original, 0.8))
+
+        if compression_score < 0.6 and blur_severity != "strong":
+            keep_original = max(keep_original, 0.8)
 
         blended = cv2.addWeighted(img, keep_original, denoised, 1.0 - keep_original, 0)
         

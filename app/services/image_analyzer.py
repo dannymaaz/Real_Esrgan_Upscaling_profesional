@@ -1102,10 +1102,10 @@ class ImageAnalyzer:
         return any([
             blur_severity == "strong",
             noise_level == "high",
-            compression_score > 0.55,
-            pixelation_score > 0.3,
-            (blur_severity == "medium" and compression_score > 0.48),
-            (blur_severity == "medium" and pixelation_score > 0.28)
+            compression_score > 0.62,
+            pixelation_score > 0.34,
+            (blur_severity == "medium" and compression_score > 0.56),
+            (blur_severity == "medium" and pixelation_score > 0.32)
         ])
 
     def _should_use_uniform_restore(
